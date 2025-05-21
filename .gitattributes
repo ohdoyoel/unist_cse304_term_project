@@ -1,0 +1,2 @@
+data/Brightkite_totalCheckins.txt filter=lfs diff=lfs merge=lfs -text
+data/Gowalla_totalCheckins.txt filter=lfs diff=lfs merge=lfs -text

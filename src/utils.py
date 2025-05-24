@@ -1,9 +1,12 @@
 import numpy as np
+import psutil
 import torch
 from scipy.sparse import csr_matrix
 from collections import defaultdict, Counter
 import os
 import pandas as pd
+
+from src.metrics import avg_clustering_coefficient, conductance, modularity, normalized_cut, silhouette_coefficient
 
 def _to_numpy(x):
     """Convert torch tensor to numpy array if needed."""
@@ -69,10 +72,15 @@ def compute_adaptive_similarity(data, features=None, pred_labels=None):
     """
     Compute adaptive similarity using entropy-based alpha for each node.
     sim_ij = alpha * sim_structure + (1-alpha) * sim_geometry
-    Returns: dict with (i, j) tuple as key and adaptive similarity as value.
+    Returns: dict with (i, j) tuple as key and adaptive similarity as value, and avg_alpha.
+    Only computes for edges present in data.edge_index.
     """
     edge_index = data.edge_index
     num_nodes = data.num_nodes
+
+    # Only compute for edge pairs
+    edge_array = _to_numpy(edge_index)
+    edge_pairs = set(map(tuple, edge_array.T))
 
     sim_structure = compute_jaccard_similarity(data)
     if features is None:
@@ -91,45 +99,84 @@ def compute_adaptive_similarity(data, features=None, pred_labels=None):
 
     # Build 1-hop neighbor list
     neighbors = defaultdict(list)
-    edges = _to_numpy(edge_index)
-    for u, v in edges.T:
+    for u, v in edge_pairs:
         neighbors[u].append(v)
         neighbors[v].append(u)
 
-    unique_labels = np.unique(labels)
+    unique_labels = np.unique(labels[labels != -1])
     n_labels = len(unique_labels)
     log_n_labels = np.log(n_labels) if n_labels > 1 else 1.0
 
     alpha = np.ones(num_nodes)
+    # label index 매핑을 미리 만들어서 속도 개선
+    label_to_idx = {l: i for i, l in enumerate(unique_labels)}
     for i in range(num_nodes):
         neigh = neighbors[i]
-        if not neigh:
+        neigh_labels = labels[neigh]
+        neigh_labels = neigh_labels[neigh_labels != -1]
+        if len(neigh_labels) == 0:
             alpha[i] = 1.0
             continue
-        label_count = Counter(labels[neigh])
-        p = np.array([label_count[l] / len(neigh) for l in unique_labels])
+        # 빠른 카운팅을 위해 numpy bincount 사용
+        idxs = np.array([label_to_idx[l] for l in neigh_labels if l in label_to_idx])
+        bincount = np.bincount(idxs, minlength=n_labels)
+        p = bincount / len(neigh_labels)
         H = -np.sum(p * np.log(p + 1e-12))
         alpha[i] = 1 - (H / log_n_labels) if log_n_labels > 0 else 1.0
         alpha[i] = np.clip(alpha[i], 0, 1)
 
     adaptive_sim = {}
-    keys = set(sim_structure.keys()) | set(sim_geometry.keys())
-    for (i, j) in keys:
+    for (i, j) in edge_pairs:
         s = sim_structure.get((i, j), 0.0)
         g = sim_geometry.get((i, j), 0.0)
         a = (alpha[i] + alpha[j]) / 2
         adaptive_sim[(i, j)] = a * s + (1 - a) * g
-    return adaptive_sim
+    avg_alpha = float(np.mean(alpha))
+    return adaptive_sim, avg_alpha
 
-def save_graph_result(nodes, edges, nodes_filename, edges_filename, result_dir='result'):
+def save_graph_result(nodes, edges, filename, result_dir='result'):
     """
     Save nodes and edges DataFrame to CSV files in the result directory.
     """
     os.makedirs(result_dir, exist_ok=True)
-    nodes_path = os.path.join(result_dir, nodes_filename)
-    edges_path = os.path.join(result_dir, edges_filename)
+    nodes_path = os.path.join(result_dir, filename + "_nodes.csv")
+    edges_path = os.path.join(result_dir, filename + "_edges.csv")
     nodes.to_csv(nodes_path, index=False)
     edges.to_csv(edges_path, index=False)
+
+def evaluate_and_save_results(data, pred_labels, adj_matrix, result_filename, method_name, result_dir='result'):
+    """
+    Evaluate clustering results and save to a file.
+    """
+    modularity_score = modularity(data, pred_labels)
+    conductance_score = conductance(data, pred_labels)
+    avg_clustering_coeff = avg_clustering_coefficient(data, pred_labels)
+    normalized_cut_score = normalized_cut(data, pred_labels)
+    silhouette_score_value = silhouette_coefficient(adj_matrix, pred_labels)
+
+    print(f"# of Labels: {len(np.unique(pred_labels))}")
+    print(f"Modularity: {modularity_score}")
+    print(f"Conductance: {conductance_score}")
+    print(f"Avg Clustering Coefficient: {avg_clustering_coeff}")
+    print(f"Normalized Cut: {normalized_cut_score}")
+    print(f"Silhouette Coefficient: {silhouette_score_value}")
+    process = psutil.Process(os.getpid())
+    print(f"CPU Memory Usage: {psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2:.2f} MB")
+    if torch.cuda.is_available():
+        print(f"GPU Memory Usage: {torch.cuda.memory_allocated() / 1024 ** 2:.2f} MB")
+
+    with open(os.path.join(result_dir, result_filename), 'a') as f:
+        f.write("\n")
+        f.write(f"{method_name}\n")
+        f.write(f"# of Labels: {len(np.unique(pred_labels))}\n")
+        f.write(f"Modularity: {modularity_score}\n")
+        f.write(f"Conductance: {conductance_score}\n")
+        f.write(f"Avg Clustering Coefficient: {avg_clustering_coeff}\n")
+        f.write(f"Normalized Cut: {normalized_cut_score}\n")
+        f.write(f"Silhouette Coefficient: {silhouette_score_value}\n")
+        f.write(f"CPU Memory Usage: {process.memory_info().rss / 1024 ** 2:.2f} MB\n")
+        if torch.cuda.is_available():
+            f.write(f"GPU Memory Usage: {torch.cuda.memory_allocated() / 1024 ** 2:.2f} MB\n")
 
 def scipy_sparse_to_torch_sparse(sparse_mtx):
     """

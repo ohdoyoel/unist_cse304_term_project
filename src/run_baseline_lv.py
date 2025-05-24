@@ -2,8 +2,8 @@ import torch
 import numpy as np
 import pandas as pd
 from src.dataset import load_dataset
-from src.model.lp import label_propagation
-from src.utils import compute_adaptive_similarity, save_graph_result, scipy_sparse_to_torch_sparse
+from src.model.lv import louvain_method
+from src.utils import evaluate_and_save_results, save_graph_result, scipy_sparse_to_torch_sparse
 
 def get_long_lat(data, num_nodes):
     longitude = (
@@ -18,12 +18,12 @@ def get_long_lat(data, num_nodes):
     )
     return longitude, latitude
 
-def save_result(data, pred_lp, file):
+def save_result(data, community_labels, file):
     num_nodes = data.num_nodes
     longitude, latitude = get_long_lat(data, num_nodes)
     nodes_df = pd.DataFrame({
         'node_id': np.arange(num_nodes),
-        'cluster_label': pred_lp.cpu().numpy(),
+        'cluster_labels': community_labels,
         'longitude': longitude,
         'latitude': latitude
     })
@@ -31,7 +31,7 @@ def save_result(data, pred_lp, file):
     edges_df = pd.DataFrame({
         'source': edge_array[0],
         'target': edge_array[1]
-    }).drop_duplicates()
+    }).T.drop_duplicates().T
     save_graph_result(nodes_df, edges_df, file)
 
 if __name__ == '__main__':
@@ -39,29 +39,21 @@ if __name__ == '__main__':
     data, _ = load_dataset(dataset_name)
     num_nodes = data.num_nodes
 
-    # 각 노드를 다른 클러스터로 초기화
-    labels = torch.arange(num_nodes)
-    mask = torch.zeros(num_nodes, dtype=torch.bool)
-    mask[torch.randperm(num_nodes)[:int(0.1 * num_nodes)]] = True
-
-    from src.utils import compute_adaptive_similarity
-    from src.model.lp import label_propagation
-
-    # features 인자를 명시적으로 전달
-    pred_lp, last_adj_matrix = label_propagation(
-        data, labels, mask,
-        adaptive_similarity_fn=compute_adaptive_similarity,
-        data=data,
-        features=data.x,
-        max_iter=10,
-        verbose=True
+    from scipy.sparse import coo_matrix
+    edge_array = data.edge_index.cpu().numpy() if hasattr(data.edge_index, 'cpu') else data.edge_index
+    adj_matrix_sparse = coo_matrix(
+        (np.ones(edge_array.shape[1]), (edge_array[0], edge_array[1])),
+        shape=(num_nodes, num_nodes)
     )
+    adj_matrix = scipy_sparse_to_torch_sparse(adj_matrix_sparse)
 
-    save_result(data, pred_lp, 'adaptive_lp')
+    community_labels = louvain_method(adj_matrix)
+    save_result(data, community_labels, 'lv')
 
     from src.utils import evaluate_and_save_results
+    import torch
     evaluate_and_save_results(
-        data.edge_index, pred_lp, last_adj_matrix,
-        "adaptive_lp_result.txt",
-        "Label Propagation (Adaptive Similarity):"
+        data.edge_index, torch.tensor(community_labels), adj_matrix,
+        "lv_result.txt",
+        "Louvain Method:"
     )

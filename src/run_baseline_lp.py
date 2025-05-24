@@ -6,13 +6,6 @@ import pandas as pd
 from src.dataset import load_dataset
 from src.model.lp import label_propagation
 from src.utils import compute_jaccard_similarity, save_graph_result, scipy_sparse_to_torch_sparse
-from src.metrics import modularity, conductance, normalized_cut, avg_clustering_coefficient, silhouette_coefficient, graph_density
-
-def print_memory_usage():
-    process = psutil.Process(os.getpid())
-    print(f"CPU Memory Usage: {process.memory_info().rss / 1024 ** 2:.2f} MB")
-    if torch.cuda.is_available():
-        print(f"GPU Memory Usage: {torch.cuda.memory_allocated() / 1024 ** 2:.2f} MB")
 
 def get_long_lat(data, num_nodes):
     longitude = (
@@ -27,9 +20,12 @@ def get_long_lat(data, num_nodes):
     )
     return longitude, latitude
 
-def save_result(data, pred_lp, nodes_filename, edges_filename):
+def save_result(data, pred_lp, file):
     num_nodes = data.num_nodes
     longitude, latitude = get_long_lat(data, num_nodes)
+    # pred_lp가 tuple이면 첫 번째 값만 사용
+    if isinstance(pred_lp, tuple):
+        pred_lp = pred_lp[0]
     nodes_df = pd.DataFrame({
         'node_id': np.arange(num_nodes),
         'cluster_label': pred_lp.cpu().numpy(),
@@ -41,14 +37,15 @@ def save_result(data, pred_lp, nodes_filename, edges_filename):
         'source': edge_array[0],
         'target': edge_array[1]
     }).T.drop_duplicates().T
-    save_graph_result(nodes_df, edges_df, nodes_filename, edges_filename)
+    save_graph_result(nodes_df, edges_df, file)
 
 if __name__ == '__main__':
     dataset_name = 'brightkite'
     data, _ = load_dataset(dataset_name)
     num_nodes = data.num_nodes
-    k = 3
-    labels = torch.randint(0, k, (num_nodes,))
+
+    # 각 노드를 다른 클러스터로 초기화
+    labels = torch.arange(num_nodes)
     mask = torch.zeros(num_nodes, dtype=torch.bool)
     mask[torch.randperm(num_nodes)[:int(0.1 * num_nodes)]] = True
 
@@ -61,14 +58,14 @@ if __name__ == '__main__':
     adj_matrix = scipy_sparse_to_torch_sparse(adj_matrix_sparse.tocsr())
 
     pred_lp = label_propagation(adj_matrix, labels, mask)
-    save_result(data, pred_lp, 'baseline_nodes.csv', 'baseline_edges.csv')
+    # pred_lp가 tuple이면 첫 번째 값만 사용
+    if isinstance(pred_lp, tuple):
+        pred_lp = pred_lp[0]
+    save_result(data, pred_lp, 'lp')
 
-    print("Label Propagation (Jaccard-based):")
-    print("Modularity:", modularity(data.edge_index, pred_lp))
-    print("Conductance:", conductance(data.edge_index, pred_lp))
-    print("Normalized Cut:", normalized_cut(data.edge_index, pred_lp))
-    print("Avg Clustering Coefficient:", avg_clustering_coefficient(data.edge_index, pred_lp))
-    print("Silhouette Coefficient:", silhouette_coefficient(adj_matrix, pred_lp, sample_size=1000))
-    print("Graph Density:", graph_density(data.edge_index, data.num_nodes))
-
-    print_memory_usage()
+    from src.utils import evaluate_and_save_results
+    evaluate_and_save_results(
+        data.edge_index, pred_lp, adj_matrix, 
+        "lp_result.txt", 
+        "Label Propagation (Jaccard-based):"
+    )

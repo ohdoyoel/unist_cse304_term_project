@@ -1,4 +1,6 @@
 from sklearn.metrics import normalized_mutual_info_score, adjusted_rand_score, homogeneity_score, completeness_score, v_measure_score
+import numpy as np
+import networkx as nx
 
 def evaluate_clustering(true_labels, pred_labels):
     metrics = {}
@@ -9,30 +11,29 @@ def evaluate_clustering(true_labels, pred_labels):
     metrics['V-Measure'] = v_measure_score(true_labels, pred_labels)
     return metrics
 
-import numpy as np
-import networkx as nx
-from sklearn.metrics import silhouette_score
+def _to_numpy(tensor):
+    # Helper to convert torch tensor to numpy array
+    return tensor.cpu().numpy()
 
-# --- Unsupervised metrics implementations ---
-def modularity(edge_index, labels):
-    # edge_index: torch.Tensor shape [2, num_edges]
-    # labels: torch.Tensor shape [num_nodes]
+def _build_graph(edge_index):
+    # Helper to build nx.Graph from edge_index torch tensor
     import torch
     G = nx.Graph()
-    edges = edge_index.cpu().numpy().T
+    edges = _to_numpy(edge_index).T
     G.add_edges_from(edges)
+    return G
+
+def modularity(edge_index, labels):
+    G = _build_graph(edge_index)
     communities = {}
-    for idx, label in enumerate(labels.cpu().numpy()):
+    for idx, label in enumerate(_to_numpy(labels)):
         communities.setdefault(label, []).append(idx)
     comms = list(communities.values())
     return nx.algorithms.community.quality.modularity(G, comms)
 
 def conductance(edge_index, labels):
-    import torch
-    G = nx.Graph()
-    edges = edge_index.cpu().numpy().T
-    G.add_edges_from(edges)
-    labels_np = labels.cpu().numpy()
+    G = _build_graph(edge_index)
+    labels_np = _to_numpy(labels)
     unique_labels = np.unique(labels_np)
     conductances = []
     for label in unique_labels:
@@ -46,11 +47,8 @@ def conductance(edge_index, labels):
     return float(np.mean(conductances)) if conductances else 0.0
 
 def normalized_cut(edge_index, labels):
-    import torch
-    G = nx.Graph()
-    edges = edge_index.cpu().numpy().T
-    G.add_edges_from(edges)
-    labels_np = labels.cpu().numpy()
+    G = _build_graph(edge_index)
+    labels_np = _to_numpy(labels)
     unique_labels = np.unique(labels_np)
     ncuts = []
     for label in unique_labels:
@@ -66,11 +64,8 @@ def normalized_cut(edge_index, labels):
     return float(np.mean(ncuts)) if ncuts else 0.0
 
 def avg_clustering_coefficient(edge_index, labels):
-    import torch
-    G = nx.Graph()
-    edges = edge_index.cpu().numpy().T
-    G.add_edges_from(edges)
-    labels_np = labels.cpu().numpy()
+    G = _build_graph(edge_index)
+    labels_np = _to_numpy(labels)
     unique_labels = np.unique(labels_np)
     avg_coeffs = []
     for label in unique_labels:
@@ -84,21 +79,21 @@ def avg_clustering_coefficient(edge_index, labels):
 def silhouette_coefficient(adj_matrix, labels, sample_size=1000):
     # adj_matrix: torch.Tensor or np.ndarray (n, n)
     # labels: torch.Tensor or np.ndarray (n,)
-    import numpy as np
     from sklearn.metrics import silhouette_score
+    import numpy as np
 
-    if isinstance(adj_matrix, np.ndarray):
-        X = adj_matrix
-    else:
-        # Handle torch sparse tensor
-        if adj_matrix.is_sparse:
+    if hasattr(adj_matrix, 'cpu'):
+        # torch.Tensor
+        if getattr(adj_matrix, 'is_sparse', False):
             X = adj_matrix.to_dense().cpu().numpy()
         else:
             X = adj_matrix.cpu().numpy()
-    if isinstance(labels, np.ndarray):
-        y = labels
     else:
+        X = adj_matrix
+    if hasattr(labels, 'cpu'):
         y = labels.cpu().numpy()
+    else:
+        y = labels
 
     n = X.shape[0]
     if n > sample_size:
@@ -116,8 +111,5 @@ def silhouette_coefficient(adj_matrix, labels, sample_size=1000):
         return 0.0
 
 def graph_density(edge_index, num_nodes):
-    import torch
-    G = nx.Graph()
-    edges = edge_index.cpu().numpy().T
-    G.add_edges_from(edges)
+    G = _build_graph(edge_index)
     return nx.density(G)

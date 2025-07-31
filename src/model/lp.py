@@ -1,62 +1,77 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, lil_matrix
 from sklearn.preprocessing import normalize
+from src.utils import scipy_sparse_to_torch_sparse
 
-def label_propagation(A, labels, mask, alpha=0.6, max_iter=10, tol=1e-6, adaptive_similarity_fn=None, data=None, features=None, verbose=False):
+def label_propagation(similarity, labels, mask, alpha=1, max_iter=1000, tol=1e-6, verbose=True):
     """
-    If adaptive_similarity_fn is provided, A will be recomputed at each iteration using the function:
-    adaptive_similarity_fn(data, features, pred_labels)
+    기본적인 Label Propagation 알고리즘을 수행합니다.
+    
+    Args:
+        similarity: 노드 간 유사도를 담은 딕셔너리 {(u,v): similarity_score}
+        labels: 노드 레이블
+        mask: 레이블이 있는 노드를 나타내는 마스크
+        alpha: 전파 강도 (기본값: 1)
+        max_iter: 최대 반복 횟수 (기본값: 1000)
+        tol: 수렴 허용 오차 (기본값: 1e-6)
+        verbose: 상세 출력 여부 (기본값: True)
+    
+    Returns:
+        pred_labels: 예측된 레이블
+        iter_info: 반복 과정 정보
     """
     unique_labels, labels_remap = torch.unique(labels[mask], return_inverse=True)
     n = labels.size(0)
     k = unique_labels.size(0)
-    # Data 객체가 들어오면 edge_index 등에서 adj_matrix를 직접 생성
-    if hasattr(A, "edge_index") and hasattr(A, "num_nodes"):
-        # A가 Data 객체라면, edge_index로부터 sparse adj 생성
-        from scipy.sparse import coo_matrix
-        edge_array = A.edge_index.cpu().numpy() if hasattr(A.edge_index, 'cpu') else A.edge_index
-        adj_matrix_sparse = coo_matrix(
-            (np.ones(edge_array.shape[1]), (edge_array[0], edge_array[1])),
-            shape=(A.num_nodes, A.num_nodes)
-        )
-        from src.utils import scipy_sparse_to_torch_sparse
-        A = scipy_sparse_to_torch_sparse(adj_matrix_sparse).to(labels.device)
-    # device 결정: A가 None이거나 device 속성이 없으면 labels.device 사용
-    if A is not None and hasattr(A, "device"):
-        device = A.device
-    else:
-        device = labels.device
+    device = labels.device
+
+    # similarity로부터 sparse adjacency matrix 생성
+    adj_matrix_sparse = lil_matrix((n, n))
+    for (u, v), score in similarity.items():
+        adj_matrix_sparse[u, v] = score
+        adj_matrix_sparse[v, u] = score  # 무방향 그래프 가정
+    
+    # sparse matrix를 PyTorch sparse tensor로 변환
+    A = scipy_sparse_to_torch_sparse(adj_matrix_sparse.tocsr()).to(device)
+    
+    # 초기 레이블 분포 설정
     Y = torch.zeros((n, k), device=device)
-    Y[mask, labels_remap] = 1  # Only labeled nodes are one-hot
+    Y[mask, labels_remap] = 1  # 레이블이 있는 노드만 one-hot으로 초기화
 
-    pred_labels = unique_labels[Y.argmax(dim=1)]
-    last_A = A
-    # print(adaptive_similarity_fn, data, features)
+    label_idx = Y.argmax(dim=1)
+    pred_labels = unique_labels[label_idx]
+
+    iter_info = []
+
     for iter_idx in range(max_iter):
-        # adaptive similarity 업데이트
-        if adaptive_similarity_fn is not None and data is not None and features is not None:
-            similarity, avg_alpha = adaptive_similarity_fn(data, features=features, pred_labels=pred_labels)
-            print(f"Iter {iter_idx+1} - Avg alpha: {avg_alpha}")
-            from scipy.sparse import lil_matrix
-            adj_matrix_sparse = lil_matrix((n, n))
-            for (u, v), score in similarity.items():
-                adj_matrix_sparse[u, v] = score
-                adj_matrix_sparse[v, u] = score
-            from src.utils import scipy_sparse_to_torch_sparse
-            A = scipy_sparse_to_torch_sparse(adj_matrix_sparse.tocsr()).to(device)
-            last_A = A
-
-        if A is not None and hasattr(A, "is_sparse") and A.is_sparse:
-            AY = torch.sparse.mm(A, Y)
-        else:
-            AY = torch.mm(A, Y)
+        # Label Propagation 단계
+        AY = torch.sparse.mm(A, Y)
         Y_new = alpha * AY + (1 - alpha) * Y
-        if torch.norm(Y_new - Y, p='fro') < tol:
-            break
-        Y = Y_new
-        pred_labels = unique_labels[Y.argmax(dim=1)]
+        
+        # 각 노드의 레이블 분포를 확률 분포로 정규화
+        Y_new = F.normalize(Y_new, p=1, dim=1)
+        
+        # 레이블 변화 확인
+        label_idx_new = Y_new.argmax(dim=1)
+        pred_labels_new = unique_labels[label_idx_new]
+        label_changes = (pred_labels_new != pred_labels).sum().item()
+        
+        diff = torch.norm(Y_new - Y, p='fro').item()
+        num_unique_labels = len(torch.unique(pred_labels_new))
+        iter_info.append(f"Iter {iter_idx+1}: #labels={num_unique_labels}, changes={label_changes}, diff={diff:.6f}")
         if verbose:
-            print(f"Iter {iter_idx+1}: #labels={len(torch.unique(pred_labels))}")
-    return unique_labels[Y.argmax(dim=1)], last_A
+            print(iter_info[-1])
+        
+        # 수렴 조건 체크
+        if diff < tol or label_changes / n < 0.01:
+            iter_info.append(f"Converged at iteration {iter_idx+1}")
+            if verbose:
+                print(iter_info[-1])
+            break
+            
+        Y = Y_new
+        pred_labels = pred_labels_new
+        
+    return pred_labels, iter_info

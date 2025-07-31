@@ -1,9 +1,10 @@
+import time
 import torch
 import numpy as np
 import pandas as pd
 from src.dataset import load_dataset
-from src.model.lp import label_propagation
-from src.utils import compute_adaptive_similarity, save_graph_result, scipy_sparse_to_torch_sparse
+from src.model.alp import adaptive_label_propagation
+from src.utils import compute_adaptive_similarity, compute_jaccard_similarity, compute_location_similarity, save_graph_result, scipy_sparse_to_torch_sparse
 
 def get_long_lat(data, num_nodes):
     longitude = (
@@ -38,30 +39,36 @@ if __name__ == '__main__':
     dataset_name = 'brightkite'
     data, _ = load_dataset(dataset_name)
     num_nodes = data.num_nodes
+    print(dataset_name, "valid nodes:", num_nodes)
 
     # 각 노드를 다른 클러스터로 초기화
     labels = torch.arange(num_nodes)
     mask = torch.zeros(num_nodes, dtype=torch.bool)
-    mask[torch.randperm(num_nodes)[:int(0.1 * num_nodes)]] = True
+    mask[torch.randperm(num_nodes)[:int(0.05 * num_nodes)]] = True
 
-    from src.utils import compute_adaptive_similarity
-    from src.model.lp import label_propagation
+    # 구조적 유사도 계산
+    structure_similarity = compute_jaccard_similarity(data)
 
-    # features 인자를 명시적으로 전달
-    pred_lp, last_adj_matrix = label_propagation(
+    # 위치기반 유사도 계산
+    location_similarity = compute_location_similarity(data)
+
+    # 라벨 전파
+    start_time = time.time()
+    pred_lp, last_adj_matrix, iter_info = adaptive_label_propagation(
         data, labels, mask,
-        adaptive_similarity_fn=compute_adaptive_similarity,
-        data=data,
-        features=data.x,
-        max_iter=10,
+        structure_similarity=structure_similarity,
+        location_similarity=location_similarity,
         verbose=True
     )
+    elapsed_time = time.time() - start_time
 
-    save_result(data, pred_lp, 'adaptive_lp')
+    save_result(data, pred_lp, dataset_name + '_alp')
 
     from src.utils import evaluate_and_save_results
     evaluate_and_save_results(
-        data.edge_index, pred_lp, last_adj_matrix,
-        "adaptive_lp_result.txt",
-        "Label Propagation (Adaptive Similarity):"
+        data, pred_lp,
+        dataset_name + "_alp_result.txt",
+        "Label Propagation (Adaptive Similarity):",
+        elapsed_time,
+        iter_info
     )

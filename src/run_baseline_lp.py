@@ -1,4 +1,5 @@
 import os
+import time
 import psutil
 import torch
 import numpy as np
@@ -33,39 +34,40 @@ def save_result(data, pred_lp, file):
         'latitude': latitude
     })
     edge_array = data.edge_index.cpu().numpy() if hasattr(data.edge_index, 'cpu') else data.edge_index
-    edges_df = pd.DataFrame({
-        'source': edge_array[0],
-        'target': edge_array[1]
-    }).T.drop_duplicates().T
+    edges = set(zip(edge_array[0], edge_array[1]))
+    edges_df = pd.DataFrame(list(edges), columns=['source', 'target']).drop_duplicates()
     save_graph_result(nodes_df, edges_df, file)
 
 if __name__ == '__main__':
     dataset_name = 'brightkite'
     data, _ = load_dataset(dataset_name)
     num_nodes = data.num_nodes
+    print(dataset_name, "valid nodes:", num_nodes)
 
     # 각 노드를 다른 클러스터로 초기화
     labels = torch.arange(num_nodes)
     mask = torch.zeros(num_nodes, dtype=torch.bool)
-    mask[torch.randperm(num_nodes)[:int(0.1 * num_nodes)]] = True
+    mask[torch.randperm(num_nodes)[:int(0.05 * num_nodes)]] = True
 
+    # 구조적 유사도 계산
     similarity = compute_jaccard_similarity(data)
-    from scipy.sparse import lil_matrix
-    adj_matrix_sparse = lil_matrix((num_nodes, num_nodes))
-    for (u, v), score in similarity.items():
-        adj_matrix_sparse[u, v] = score
-        adj_matrix_sparse[v, u] = score
-    adj_matrix = scipy_sparse_to_torch_sparse(adj_matrix_sparse.tocsr())
 
-    pred_lp = label_propagation(adj_matrix, labels, mask)
+    # 라벨 전파
+    start_time = time.time()
+    pred_lp, iter_info = label_propagation(similarity, labels, mask)
+    elapsed_time = time.time() - start_time
+
     # pred_lp가 tuple이면 첫 번째 값만 사용
     if isinstance(pred_lp, tuple):
         pred_lp = pred_lp[0]
-    save_result(data, pred_lp, 'lp')
+    save_result(data, pred_lp, dataset_name + '_lp')
 
     from src.utils import evaluate_and_save_results
     evaluate_and_save_results(
-        data.edge_index, pred_lp, adj_matrix, 
-        "lp_result.txt", 
-        "Label Propagation (Jaccard-based):"
+        data, 
+        pred_lp,         
+        dataset_name + "_lp_result.txt",  
+        "Label Propagation (Jaccard-based):",  
+        elapsed_time,    
+        iter_info
     )

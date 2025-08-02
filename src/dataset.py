@@ -17,8 +17,18 @@ def load_brightkite(sample_size=None):
     df['time'] = pd.to_datetime(df['time'])
     df = df.sort_values('time')
     
-    # (0, 0) 위치 데이터 제외
-    df = df[(df['lat'] != 0) | (df['lon'] != 0)]
+    # 비정상적인 위치 데이터 제외
+    # NaN 값 제외
+    df = df.dropna(subset=['lat', 'lon'])
+    # 위도: -90° ~ 90°, 경도: -180° ~ 180°
+    df = df[
+        (df['lat'] != 0) | (df['lon'] != 0)  # (0, 0) 위치 제외
+    ]
+    # 비정상 위치 데이터 필터링
+    df = df[
+        (df['lat'] >= -90) & (df['lat'] <= 90) &  # 위도 범위 체크
+        (df['lon'] >= -180) & (df['lon'] <= 180)  # 경도 범위 체크
+    ]
     
     recent = df.groupby('user').last().reset_index()
     
@@ -87,8 +97,19 @@ def load_gowalla(sample_size=None):
     df['time'] = pd.to_datetime(df['time'])
     df = df.sort_values('time')
     
-    # (0, 0) 위치 데이터 제외
-    df = df[(df['lat'] != 0) | (df['lon'] != 0)]
+    # 비정상적인 위치 데이터 제외
+    # NaN 값 제외
+    df = df.dropna(subset=['lat', 'lon'])
+    
+    # 위도: -90° ~ 90°, 경도: -180° ~ 180°
+    df = df[
+        (df['lat'] != 0) | (df['lon'] != 0)  # (0, 0) 위치 제외
+    ]
+    # 비정상 위치 데이터 필터링
+    df = df[
+        (df['lat'] >= -90) & (df['lat'] <= 90) &  # 위도 범위 체크
+        (df['lon'] >= -180) & (df['lon'] <= 180)  # 경도 범위 체크
+    ]
     
     recent = df.groupby('user').last().reset_index()
     

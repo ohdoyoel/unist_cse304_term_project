@@ -3,9 +3,9 @@ import torch
 import numpy as np
 import pandas as pd
 from src.dataset import load_dataset
-from src.model.lv import louvain_method
-from src.model.snic import snic_method
-from src.utils import evaluate_and_save_results, save_graph_result, scipy_sparse_to_torch_sparse
+from src.model.alp import adaptive_label_propagation
+from src.model.flp import fixed_alpha_label_propagation
+from src.utils import compute_jaccard_similarity, compute_location_similarity, save_graph_result, evaluate_and_save_results
 
 def get_long_lat(data, num_nodes):
     longitude = (
@@ -23,39 +23,47 @@ def get_long_lat(data, num_nodes):
 def save_result(data, pred_lp, file):
     num_nodes = data.num_nodes
     longitude, latitude = get_long_lat(data, num_nodes)
-    # pred_lp가 tuple이면 첫 번째 값만 사용
-    if isinstance(pred_lp, tuple):
-        pred_lp = pred_lp[0]
-    # numpy array나 torch tensor 모두 처리 가능하도록
-    pred_labels = pred_lp.cpu().numpy() if hasattr(pred_lp, 'cpu') else np.asarray(pred_lp)
     nodes_df = pd.DataFrame({
         'node_id': np.arange(num_nodes),
-        'cluster_label': pred_labels,
+        'cluster_label': pred_lp.cpu().numpy(),
         'longitude': longitude,
         'latitude': latitude
     })
     edge_array = data.edge_index.cpu().numpy() if hasattr(data.edge_index, 'cpu') else data.edge_index
-    edges = set(zip(edge_array[0], edge_array[1]))
-    edges_df = pd.DataFrame(list(edges), columns=['source', 'target']).drop_duplicates()
+    edges_df = pd.DataFrame({
+        'source': edge_array[0],
+        'target': edge_array[1]
+    }).drop_duplicates()
     save_graph_result(nodes_df, edges_df, file)
 
 if __name__ == '__main__':
     dataset_name = 'brightkite'
-    data, _ = load_dataset(dataset_name, sample_size=20000)
+    data, _ = load_dataset(dataset_name)
     num_nodes = data.num_nodes
-    print(dataset_name, "valid nodes:", num_nodes)
-
-    start_time = time.time()
-    community_labels = snic_method(data)
-    elapsed_time = time.time() - start_time
+    print(dataset_name, "valid nodes:", num_nodes, "valid edges:", data.edge_index.shape[1])
+    labels = torch.arange(num_nodes)
     
-    save_result(data, community_labels, dataset_name + '_snic')
+    # 유사도 계산
+    structure_similarity = compute_jaccard_similarity(data)
+    location_similarity = compute_location_similarity(data)
 
-    from src.utils import evaluate_and_save_results
-    import torch
+    # 라벨 전파
+    start_time = time.time()
+    pred_lp, last_adj_dict, iter_info = fixed_alpha_label_propagation(
+        data, labels,
+        fixed_alpha=1.0,
+        structure_similarity=structure_similarity,
+        location_similarity=location_similarity,
+        verbose=True
+    )
+    elapsed_time = time.time() - start_time
+
+    save_result(data, pred_lp, dataset_name + '_jlp')
+
     evaluate_and_save_results(
-        data, torch.tensor(community_labels),
-        dataset_name + "_snic_result.txt",
-        "SNIC Method:",
-        elapsed_time
+        data, pred_lp,
+        dataset_name + "_jlp_result.txt",
+        "Label Propagation (Jaccard Similarity):",
+        elapsed_time,
+        iter_info
     )

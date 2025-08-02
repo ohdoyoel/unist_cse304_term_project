@@ -1,12 +1,10 @@
-import os
 import time
-import psutil
 import torch
 import numpy as np
 import pandas as pd
 from src.dataset import load_dataset
 from src.model.lp import label_propagation
-from src.utils import compute_jaccard_similarity, save_graph_result, scipy_sparse_to_torch_sparse
+from src.utils import evaluate_and_save_results, save_graph_result
 
 def get_long_lat(data, num_nodes):
     longitude = (
@@ -42,32 +40,21 @@ if __name__ == '__main__':
     dataset_name = 'brightkite'
     data, _ = load_dataset(dataset_name)
     num_nodes = data.num_nodes
-    print(dataset_name, "valid nodes:", num_nodes)
-
-    # 각 노드를 다른 클러스터로 초기화
+    print(dataset_name, "valid nodes:", num_nodes, "valid edges:", data.edge_index.shape[1])
     labels = torch.arange(num_nodes)
-    mask = torch.zeros(num_nodes, dtype=torch.bool)
-    mask[torch.randperm(num_nodes)[:int(0.05 * num_nodes)]] = True
-
-    # 구조적 유사도 계산
-    similarity = compute_jaccard_similarity(data)
 
     # 라벨 전파
     start_time = time.time()
-    pred_lp, iter_info = label_propagation(similarity, labels, mask)
+    pred_lp, iter_info = label_propagation(data.edge_index, labels)
     elapsed_time = time.time() - start_time
 
-    # pred_lp가 tuple이면 첫 번째 값만 사용
-    if isinstance(pred_lp, tuple):
-        pred_lp = pred_lp[0]
     save_result(data, pred_lp, dataset_name + '_lp')
 
-    from src.utils import evaluate_and_save_results
     evaluate_and_save_results(
         data, 
         pred_lp,         
         dataset_name + "_lp_result.txt",  
-        "Label Propagation (Jaccard-based):",  
+        "Label Propagation (Majority Voting):",
         elapsed_time,    
         iter_info
     )

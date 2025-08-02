@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from src.dataset import load_dataset
 from src.model.alp import adaptive_label_propagation
+from src.model.flp import fixed_alpha_label_propagation
 from src.utils import compute_jaccard_similarity, compute_location_similarity, save_graph_result, evaluate_and_save_results
 
 def get_long_lat(data, num_nodes):
@@ -36,7 +37,7 @@ def save_result(data, pred_lp, file):
     save_graph_result(nodes_df, edges_df, file)
 
 if __name__ == '__main__':
-    dataset_name = 'gowalla'
+    dataset_name = 'brightkite'
     data, _ = load_dataset(dataset_name)
     num_nodes = data.num_nodes
     print(dataset_name, "valid nodes:", num_nodes, "valid edges:", data.edge_index.shape[1])
@@ -48,20 +49,21 @@ if __name__ == '__main__':
 
     # 라벨 전파
     start_time = time.time()
-    pred_lp, last_adj_dict, iter_info = adaptive_label_propagation(
+    pred_lp, last_adj_dict, iter_info = fixed_alpha_label_propagation(
         data, labels,
+        fixed_alpha=0.5,
         structure_similarity=structure_similarity,
         location_similarity=location_similarity,
         verbose=True
     )
     elapsed_time = time.time() - start_time
 
-    save_result(data, pred_lp, dataset_name + '_alp')
+    save_result(data, pred_lp, dataset_name + '_jllp')
 
     evaluate_and_save_results(
         data, pred_lp,
-        dataset_name + "_alp_result.txt",
-        "Label Propagation (Adaptive Similarity):",
+        dataset_name + "_jllp_result.txt",
+        "Label Propagation (Jaccard + Location Similarity):",
         elapsed_time,
         iter_info
     )

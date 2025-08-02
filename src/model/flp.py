@@ -1,26 +1,8 @@
 import torch
 from collections import defaultdict
-from src.utils import compute_adaptive_similarity
+from src.utils import compute_fixed_alpha_similarity
 
-def adaptive_label_propagation(data, labels, structure_similarity=None, location_similarity=None, max_iter=1000, verbose=False):
-    """
-    가중치 투표 기반의 Adaptive Label Propagation 알고리즘을 수행합니다.
-    
-    Args:
-        data: Data 객체 (edge_index와 num_nodes 필요)
-        labels: 노드 레이블
-        structure_similarity: 구조적 유사도 딕셔너리 {(u,v): similarity_score}
-        location_similarity: 위치 유사도 딕셔너리 {(u,v): similarity_score}
-        alpha: 전파 강도 (기본값: 0.6)
-        max_iter: 최대 반복 횟수 (기본값: 1000)
-        tol: 수렴 허용 오차 (기본값: 1e-6)
-        verbose: 상세 출력 여부 (기본값: False)
-    
-    Returns:
-        pred_labels: 예측된 레이블
-        last_adj_dict: 마지막 유사도 딕셔너리
-        iter_info: 반복 과정 정보
-    """
+def fixed_alpha_label_propagation(data, labels, fixed_alpha, structure_similarity=None, location_similarity=None, max_iter=1000, verbose=False):
     if structure_similarity is None or location_similarity is None:
         raise ValueError("structure_similarity와 location_similarity는 반드시 제공되어야 합니다.")
 
@@ -46,17 +28,14 @@ def adaptive_label_propagation(data, labels, structure_similarity=None, location
 
     for iter_idx in range(max_iter):
         # 적응형 유사도 계산
-        similarity, avg_alpha, dev_alpha = compute_adaptive_similarity(
+        similarity, avg_alpha, dev_alpha = compute_fixed_alpha_similarity(
             data=data,
+            fixed_alpha=fixed_alpha,
             structure_similarity=structure_similarity,
             location_similarity=location_similarity,
             pred_labels=pred_labels
         )
         last_adj_dict = similarity
-        
-        # iter_info.append(f"Iter {iter_idx+1} - Avg alpha: {avg_alpha}, Dev alpha: {dev_alpha}")
-        # if verbose:
-        #     print(iter_info[-1])
 
         # 인접 리스트와 가중치 업데이트
         for i in range(n):
@@ -64,7 +43,6 @@ def adaptive_label_propagation(data, labels, structure_similarity=None, location
         
         for (u, v), score in similarity.items():
             adj_weights[u][v] = score
-            # adj_weights[v][u] = score
 
         # 가중치 기반 레이블 전파
         pred_labels_new = pred_labels.clone()

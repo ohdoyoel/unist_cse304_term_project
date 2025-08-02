@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Location Visualization</title>
+    <!-- Leaflet CSS -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <style>
+      #map {
+        height: 100vh;
+        width: 100%;
+      }
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      /* 줌 컨트롤 스타일 */
+      .leaflet-control-zoom {
+        background: rgba(255, 255, 255, 0.7) !important;
+        border: 2px solid rgba(0, 0, 0, 0.2) !important;
+      }
+      .leaflet-control-zoom a {
+        background: rgba(255, 255, 255, 0.5) !important;
+        color: #000 !important;
+      }
+      .leaflet-control-zoom a:hover {
+        background: rgba(255, 255, 255, 0.8) !important;
+      }
+      /* 스케일 컨트롤 스타일 */
+      .leaflet-control-scale {
+        background: rgba(255, 255, 255, 0.7) !important;
+        padding: 2px 5px !important;
+        border-radius: 4px;
+      }
+      .selection-control {
+        position: absolute;
+        top: 10px;
+        right: 248px;
+        z-index: 500;
+        background: rgba(255, 255, 255, 0.8);
+        padding: 4px;
+        border-radius: 4px;
+        background-clip: padding-box;
+        border: 2px solid rgba(192, 192, 192, 0.8);
+        display: flex;
+        flex-direction: column;
+        height: 53px;
+        gap: 3px;
+      }
+      .selection-control select {
+        width: 200px;
+        padding: 4px;
+        font-size: 12px;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0);
+      }
+      .selection-control select:hover {
+        background: rgba(255, 255, 255, 0.9);
+      }
+      .selection-control select:focus {
+        outline: none;
+      }
+      .edge-control {
+        position: absolute;
+        top: 10px;
+        right: 50px;
+        z-index: 500;
+        background: rgba(255, 255, 255, 0.8);
+        padding: 4px;
+        border-radius: 4px;
+        background-clip: padding-box;
+        border: 2px solid rgba(192, 192, 192, 0.8);
+        display: flex;
+        flex-direction: column;
+        height: 53px;
+        gap: 3px;
+      }
+      .edge-control label {
+        display: flex;
+        align-items: center;
+        padding-top: 3px;
+        padding-bottom: 3px;
+        width: 180px;
+        font-size: 12px;
+      }
+      .loading-container {
+        display: none;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 1000;
+        background: rgba(255, 255, 255, 0.9);
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        text-align: center;
+      }
+      .loading-spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #3498db;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 10px auto;
+      }
+      .loading-text {
+        font-size: 14px;
+        color: #333;
+      }
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <div class="selection-control">
+      <select id="dataset-select">
+        <option value="brightkite">Brightkite</option>
+        <option value="gowalla">Gowalla</option>
+        <option value="yelp">Yelp</option>
+      </select>
+      <select id="algorithm-select">
+        <option value="lp">LP (Majority Vote)</option>
+        <option value="jlp">LP (Jaccard Similarity)</option>
+        <option value="jllp">LP (Jaccard + Location Similarity)</option>
+        <option value="llp">LP (Location Similarity)</option>
+        <option value="alp">Adaptive LP</option>
+      </select>
+    </div>
+    <div class="edge-control">
+      <label>
+        <input type="checkbox" id="show-edges" checked />
+        Show Edges
+      </label>
+      <label>
+        <input type="checkbox" id="boundary-edges" checked />
+        Only Edges in Screen
+      </label>
+    </div>
+    <div id="loading" class="loading-container">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Loading Data...</div>
+    </div>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Papa Parse for CSV -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="main.js"></script>
+  </body>
+</html>

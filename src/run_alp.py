@@ -36,7 +36,7 @@ def save_result(data, pred_lp, file):
     save_graph_result(nodes_df, edges_df, file)
 
 if __name__ == '__main__':
-    dataset_name = 'yelp'
+    dataset_name = 'gowalla'
     data, _ = load_dataset(dataset_name)
     num_nodes = data.num_nodes
     print(dataset_name, "valid nodes:", num_nodes, "valid edges:", data.edge_index.shape[1])

@@ -17,6 +17,24 @@ def _get_edge_pairs(edge_index):
     edge_array = _to_numpy(edge_index)
     return set(map(tuple, edge_array.T))
 
+# 0.1 단위로 도수분포 계산 및 출력
+def print_distribution(values, bins=10, name=None):
+    # 최소값과 최대값을 반올림하여 구간 설정
+    min_val = np.floor(np.min(values) * 10) / 10
+    max_val = np.ceil(np.max(values) * 10) / 10
+    bins = np.linspace(min_val, max_val, 11)  # 10개 구간으로 균등 분할
+    
+    hist, bins = np.histogram(values, bins=bins)
+    total = len(values)
+    print(f"{name} 분포:")
+    for i in range(len(hist)):
+        start, end = bins[i], bins[i+1]
+        count = hist[i]
+        percentage = (count / total) * 100
+        print(f"  {start:.1f}-{end:.1f}: {count:5d} ({percentage:5.1f}%)")
+    print(f"  평균: {np.mean(values):.3f}, 표준편차: {np.std(values):.3f}")
+    print(f"  최소: {np.min(values):.3f}, 최대: {np.max(values):.3f}")
+
 def compute_jaccard_similarity(data, edge_index=None):
     """
     Compute Jaccard similarity for connected edges (or given edge_index pairs).
@@ -40,8 +58,15 @@ def compute_jaccard_similarity(data, edge_index=None):
         union = len(neighbors_u | neighbors_v)
         if union > 0:
             jaccard[(u, v)] = intersection / union
+    
+    # 유사도 z-score 정규화
+    mean = np.mean(list(jaccard.values()))
+    std = np.std(list(jaccard.values()))
+    jaccard = {k: (v - mean) / std for k, v in jaccard.items()}
 
     print("Jaccard similarity computation completed")
+    print_distribution(list(jaccard.values()), name="Jaccard similarity")
+
     return jaccard
 
 def compute_location_similarity(data, edge_index=None):
@@ -52,21 +77,13 @@ def compute_location_similarity(data, edge_index=None):
     print("Computing location similarity...")
     if edge_index is None:
         edge_index = data.edge_index
-    num_nodes = data.num_nodes
     
     edge_array = _to_numpy(edge_index)
-    adj = csr_matrix((np.ones(edge_array.shape[1]), (edge_array[0], edge_array[1])),
-                     shape=(num_nodes, num_nodes))
-    
-    # 위도/경도 좌표 추출
     coords = _to_numpy(data.rad_x)
     
     # Haversine 거리 계산 함수
     def haversine_distance(lat1, lon1, lat2, lon2):
         R = 6371  # 지구의 반지름 (km)
-        
-        # 라디안으로 변환
-        lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
         
         # Haversine 공식
         dlat = lat2 - lat1
@@ -75,21 +92,31 @@ def compute_location_similarity(data, edge_index=None):
         c = 2 * np.arcsin(np.sqrt(a))
         distance = R * c
         
-        # 거리를 유사도로 변환 (거리가 멀수록 유사도는 감소)
-        # 지수 감소 함수를 사용하여 거리가 0일 때 1, 멀어질수록 0에 가까워지게 함
-        similarity = np.exp(-distance)
-        return similarity
+        # # 거리를 유사도로 변환 (거리가 멀수록 유사도는 감소)
+        # # 지수 감소 함수를 사용하여 거리가 0일 때 1, 멀어질수록 0에 가까워지게 함
+        # similarity = np.exp(-distance/1000)
+        return distance
     
     # 각 엣지에 대해 유사도 계산
-    similarities = {}
+    distances = {}
     for i, j in zip(edge_array[0], edge_array[1]):
         lat1, lon1 = coords[i]
         lat2, lon2 = coords[j]
-        sim = haversine_distance(lat1, lon1, lat2, lon2)
-        similarities[(i, j)] = sim
-        similarities[(j, i)] = sim  # 무방향 그래프이므로 양방향 모두 저장
+        dis = haversine_distance(lat1, lon1, lat2, lon2)
+        distances[(i, j)] = dis
+        distances[(j, i)] = dis  # 무방향 그래프이므로 양방향 모두 저장
+
+    # 유사도 계산 (거리가 멀수록 유사도는 감소)
+    similarities = {k: -v for k, v in distances.items()}
+    
+    # 유사도 z-score 정규화
+    mean = np.mean(list(similarities.values()))
+    std = np.std(list(similarities.values()))
+    similarities = {k: (v - mean) / std for k, v in similarities.items()}
     
     print("Location similarity computation completed")
+    print_distribution(list(similarities.values()), name="Location similarity")
+
     return similarities
 
 def compute_geometric_similarity(features, edge_index=None):
@@ -119,7 +146,8 @@ def compute_geometric_similarity(features, edge_index=None):
                     cos_sim[(i, j)] = sim
     return cos_sim
 
-def compute_adaptive_similarity(data, structure_similarity, location_similarity, pred_labels=None, mask=None):
+
+def compute_adaptive_similarity(data, structure_similarity, location_similarity, pred_labels=None):
     """
     적응형 유사도 계산 함수
     
@@ -128,7 +156,6 @@ def compute_adaptive_similarity(data, structure_similarity, location_similarity,
         structure_similarity: 미리 계산된 구조적 유사도 딕셔너리 {(u,v): similarity_score}
         location_similarity: 미리 계산된 위치 기반 유사도 딕셔너리 {(u,v): similarity_score}
         pred_labels: 현재 예측된 레이블 (기본값: None, data.y 사용)
-        mask: 레이블이 있는 노드를 나타내는 마스크 (기본값: None)
     
     Returns:
         adaptive_sim: 적응형 유사도 딕셔너리 {(u,v): similarity_score}
@@ -168,18 +195,11 @@ def compute_adaptive_similarity(data, structure_similarity, location_similarity,
         for node in nodes_to_compute.copy():
             nodes_to_compute.update(adj[node].indices)
     
-    # mask된 노드들 처리
-    if mask is not None:
-        mask = _to_numpy(mask)
-        masked_nodes = np.where(mask)[0]
-        nodes_to_compute.update(masked_nodes)
-        for node in masked_nodes:
-            nodes_to_compute.update(adj[node].indices)
-    
     nodes_to_compute = np.array(list(nodes_to_compute))
     
     # 노드별 알파값 계산
-    alpha = np.ones(num_nodes)
+    alpha = np.full(num_nodes, 0.5)
+
     for node in nodes_to_compute:
         neighbors = adj[node].indices
         if len(neighbors) == 0:
@@ -197,6 +217,7 @@ def compute_adaptive_similarity(data, structure_similarity, location_similarity,
         # 최대 엔트로피 계산 (모든 레이블이 균등하게 분포된 경우)
         n_unique_labels = len(label_counts)
         max_entropy = np.log(n_unique_labels) if n_unique_labels > 1 else 1.0
+        # max_entropy = np.log(len(unique_labels)) if len(unique_labels) > 1 else 1.0 # 비교를 위해 모든 레이블 수 사용
         
         # 실제 엔트로피 계산
         probs = label_counts / len(valid_neigh)
@@ -206,11 +227,11 @@ def compute_adaptive_similarity(data, structure_similarity, location_similarity,
         normalized_entropy = entropy / max_entropy if max_entropy != 0 else 0
         normalized_entropy = np.clip(normalized_entropy, 0, 1)
         
-        # 알파값 계산: 이웃들이 모두 같은 레이블이면 alpha=1, 모두 다른 레이블이면 alpha=0
+        # 알파값 계산: 노드의 구조적 신뢰도를 나타냄
+        # - 이웃들이 모두 같은 레이블이면 alpha=1 (구조가 매우 명확함)
+        # - 이웃들의 레이블이 다양할수록 alpha=0에 가까워짐 (구조가 모호함)
+        # 이 값은 해당 노드가 다른 노드에게 구조적 정보를 전달할 때의 신뢰도로 사용됨
         alpha[node] = 1 - normalized_entropy
-
-    # Fixed Alpha 실험
-    # alpha = np.full(num_nodes, 1.0)
     
     # 적응형 유사도 계산
     adaptive_sim = {}
@@ -221,14 +242,107 @@ def compute_adaptive_similarity(data, structure_similarity, location_similarity,
         i, j = edge_array[0, idx], edge_array[1, idx]
         
         # 미리 계산된 유사도 사용
-        sim_structure = structure_similarity.get((i, j), 0.0)
-        sim_location = location_similarity.get((i, j), 0.0)
-        
+        sim_structure = structure_similarity[(i, j)]
+        sim_location = location_similarity[(i, j)]
+
         # 적응형 가중치 적용
-        a = (alpha[i] + alpha[j]) / 2
-        adaptive_sim[(i, j)] = a * sim_structure + (1 - a) * sim_location
+        # alpha[j]를 사용: j(송신자)의 구조적 신뢰도에 따라 구조적 유사도의 영향력 조절
+        # - j의 이웃이 일관된 레이블을 가질 때(alpha[j]가 높을 때) → 구조적 유사도를 더 신뢰
+        # - j의 이웃이 다양한 레이블을 가질 때(alpha[j]가 낮을 때) → 위치 유사도에 더 의존
+        adaptive_sim[(i, j)] = alpha[j] * sim_structure + (1 - alpha[j]) * sim_location
+        
+        # a = (alpha[i] + alpha[j]) / 2
+        # adaptive_sim[(i, j)] = a * sim_structure + (1 - a) * sim_location
     
-    # 통계 계산
+    # 통계 계산 및 디버깅을 위한 분포 출력
+    computed_alphas = alpha[nodes_to_compute]
+    avg_alpha = float(np.mean(computed_alphas))
+    dev_alpha = float(np.std(computed_alphas))
+    
+    # 알파값 분포
+    print_distribution(computed_alphas, name="알파값")
+    
+    # 적응형 유사도 분포
+    adaptive_sims = np.array([sim for sim in adaptive_sim.values()])
+    print_distribution(adaptive_sims, name="적응형 유사도")
+    
+    return adaptive_sim, avg_alpha, dev_alpha
+
+def compute_fixed_alpha_similarity(data, fixed_alpha, structure_similarity, location_similarity, pred_labels=None):
+    """
+    적응형 유사도 계산 함수
+    
+    Args:
+        data: Data 객체 (edge_index와 num_nodes 필요)
+        structure_similarity: 미리 계산된 구조적 유사도 딕셔너리 {(u,v): similarity_score}
+        location_similarity: 미리 계산된 위치 기반 유사도 딕셔너리 {(u,v): similarity_score}
+        pred_labels: 현재 예측된 레이블 (기본값: None, data.y 사용)
+    
+    Returns:
+        adaptive_sim: 적응형 유사도 딕셔너리 {(u,v): similarity_score}
+        avg_alpha: 평균 알파 값
+        dev_alpha: 알파 값의 표준편차
+    """
+    edge_index = data.edge_index
+    num_nodes = data.num_nodes
+    edge_array = _to_numpy(edge_index)
+    
+    # 무방향 그래프를 위한 대칭 행렬 생성 (CSR 형식 사용)
+    adj = csr_matrix((np.ones(edge_array.shape[1]), (edge_array[0], edge_array[1])),
+                     shape=(num_nodes, num_nodes))
+    adj = adj + adj.T
+    adj.data = np.ones_like(adj.data)
+    
+    # labels 준비
+    if pred_labels is None:
+        labels = getattr(data, 'y', None)
+        if labels is None:
+            raise ValueError("pred_labels or data.y must be provided")
+        labels = _to_numpy(labels)
+    else:
+        labels = _to_numpy(pred_labels)
+    
+    # 유효한 레이블만 선택
+    valid_mask = (labels != -1) & ~np.isnan(labels)
+    unique_labels = np.unique(labels[valid_mask])
+    label_to_idx = {label: i for i, label in enumerate(unique_labels)}
+    
+    # 전파가 필요한 노드 식별 (레이블이 다른 엣지의 노드들)
+    nodes_to_compute = set()
+    diff_labels = labels[edge_array[0]] != labels[edge_array[1]]
+    if diff_labels.any():
+        nodes_to_compute.update(edge_array[0][diff_labels])
+        nodes_to_compute.update(edge_array[1][diff_labels])
+        for node in nodes_to_compute.copy():
+            nodes_to_compute.update(adj[node].indices)
+    
+    nodes_to_compute = np.array(list(nodes_to_compute))
+    
+    # 노드별 알파값 계산
+    alpha = np.full(num_nodes, fixed_alpha)
+    
+    # 적응형 유사도 계산
+    adaptive_sim = {}
+    edge_mask = np.isin(edge_array[0], nodes_to_compute) | np.isin(edge_array[1], nodes_to_compute)
+    edges_to_compute = np.where(edge_mask)[0]
+    
+    for idx in edges_to_compute:
+        i, j = edge_array[0, idx], edge_array[1, idx]
+        
+        # 미리 계산된 유사도 사용
+        sim_structure = structure_similarity[(i, j)]
+        sim_location = location_similarity[(i, j)]
+
+        # 적응형 가중치 적용
+        # alpha[j]를 사용: j(송신자)의 구조적 신뢰도에 따라 구조적 유사도의 영향력 조절
+        # - j의 이웃이 일관된 레이블을 가질 때(alpha[j]가 높을 때) → 구조적 유사도를 더 신뢰
+        # - j의 이웃이 다양한 레이블을 가질 때(alpha[j]가 낮을 때) → 위치 유사도에 더 의존
+        adaptive_sim[(i, j)] = alpha[j] * sim_structure + (1 - alpha[j]) * sim_location
+        
+        # a = (alpha[i] + alpha[j]) / 2
+        # adaptive_sim[(i, j)] = a * sim_structure + (1 - a) * sim_location
+    
+    # 통계 계산 및 디버깅을 위한 분포 출력
     computed_alphas = alpha[nodes_to_compute]
     avg_alpha = float(np.mean(computed_alphas))
     dev_alpha = float(np.std(computed_alphas))
@@ -310,31 +424,17 @@ def evaluate_and_save_results(data, pred_labels, result_filename, method_name, e
         print(f"Error calculating Conductance: {str(e)}")
         conductance_score = -9
     print(f"Conductance: {conductance_score}")
-    # try:
-    #     avg_clustering_coeff = avg_clustering_coefficient(data.edge_index, pred_labels)
-    # except Exception as e:
-    #     print(f"Error calculating Avg Clustering Coefficient: {str(e)}")
-    #     avg_clustering_coeff = -9
-    # print(f"Avg Clustering Coefficient: {avg_clustering_coeff}")
-    # try:
-    #     normalized_cut_score = normalized_cut(data.edge_index, pred_labels)
-    # except Exception as e:
-    #     print(f"Error calculating Normalized Cut: {str(e)}")
-    #     normalized_cut_score = -9
-    # print(f"Normalized Cut: {normalized_cut_score}")
-
     try:
         intra_cluster_distance = intra_cluster_avg_distance(data, pred_labels)
     except Exception as e:
         print(f"Error calculating Intra-cluster Distance: {str(e)}")
         intra_cluster_distance = -9
     print(f"Intra-cluster Distance: {intra_cluster_distance}")
-
-    # 위도/경도 정보 추출 (data.x에서)
     try:
-        if hasattr(data, 'rad_x') and data.rad_x is not None and data.rad_x.shape[1] == 2:
+        if hasattr(data, 'x') and data.x is not None and data.x.shape[1] == 2:  # 도(degree) 단위의 좌표 사용
             # data.x의 첫 번째 열이 위도, 두 번째 열이 경도
-            coordinates = data.rad_x.cpu().numpy() if hasattr(data.rad_x, 'cpu') else data.rad_x
+            # sklearn.metrics.pairwise.haversine_distances는 도(degree) 단위를 기대하므로 data.x 사용
+            coordinates = data.x.cpu().numpy() if hasattr(data.x, 'cpu') else data.x
             silhouette_score_value = spatial_silhouette(coordinates, pred_labels, metric='haversine')
         else:
             print("Warning: No valid coordinate data found in data.x. Skipping spatial silhouette calculation.")
@@ -342,8 +442,11 @@ def evaluate_and_save_results(data, pred_labels, result_filename, method_name, e
     except Exception as e:
         print(f"Error calculating spatial silhouette: {str(e)}")
         silhouette_score_value = -9
-    
     print(f"Silhouette Score: {silhouette_score_value}")
+    
+    # 각 클러스터의 노드 수 계산
+    _, label_counts = np.unique(pred_labels, return_counts=True)
+    print_distribution(label_counts, bins=100, name="클러스터별 노드 수")
 
     with open(os.path.join(result_dir, result_filename), 'a') as f:
         f.write("\n")

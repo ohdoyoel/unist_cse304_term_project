@@ -235,14 +235,13 @@ def normalized_cut(edge_index, labels, sample_size=1000):
             
     return float(np.mean(ncuts)) if ncuts else 0.0
 
-def intra_cluster_avg_distance(data, pred_labels, max_sample_size=1000):
+def intra_cluster_avg_distance(data, pred_labels, max_sample_size=10000):
     """
     각 클러스터 내 노드들 간의 평균 거리 계산
     
     Args:
         data: 데이터 객체 (rad_x: 라디안 단위의 [위도, 경도] 좌표 포함)
         pred_labels: 예측된 클러스터 레이블 배열
-        max_sample_size: 큰 클러스터에서 사용할 최대 샘플 크기
         
     Returns:
         float: 클러스터 내 평균 거리 (km)
@@ -262,7 +261,7 @@ def intra_cluster_avg_distance(data, pred_labels, max_sample_size=1000):
     total_distance = 0.0
     total_pairs = 0
     
-    def calculate_distances_batch(coords, batch_size=10000):
+    def calculate_distances_batch(coords, batch_size=2000):
         """배치 단위로 거리 계산"""
         n = len(coords)
         distances = []
@@ -328,7 +327,7 @@ def intra_cluster_avg_distance(data, pred_labels, max_sample_size=1000):
     
     return avg_distance
 
-def spatial_silhouette(coordinates, labels, metric='euclidean', sample_size=10000):
+def spatial_silhouette(coordinates, labels, metric='euclidean', sample_size=5000):
     """
     좌표 정보를 사용하여 실루엣 스코어를 계산합니다.
     

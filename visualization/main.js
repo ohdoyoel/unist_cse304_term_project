@@ -1,4 +1,4 @@
-// 지도 초기화 (한국 중심으로 설정)
+// 지도 초기화
 const map = L.map("map");
 
 // ESRI World Imagery (위성 사진) 타일 레이어 추가

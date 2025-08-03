@@ -165,8 +165,11 @@ async function loadData() {
   try {
     setLoading(true);
 
-    const nodesFile = `../result/${selectedDataset}_${selectedAlgorithm}_nodes.csv`;
-    const edgesFile = `../result/${selectedDataset}_${selectedAlgorithm}_edges.csv`;
+    // 현재 환경에 따라 경로 설정 (로컬 또는 GitHub Pages)
+    const isGitHubPages = window.location.hostname.includes("github.io");
+    const basePath = isGitHubPages ? "/unist_cse304_term_project" : "";
+    const nodesFile = `${basePath}/result/${selectedDataset}_${selectedAlgorithm}_nodes.csv`;
+    const edgesFile = `${basePath}/result/${selectedDataset}_${selectedAlgorithm}_edges.csv`;
 
     const [nodes, edges] = await Promise.all([
       loadCSV(nodesFile),
@@ -198,12 +201,18 @@ async function loadData() {
     visualizeEdges();
 
     // 지도 뷰 조정
-    const bounds = L.latLngBounds(
-      nodes.map((node) => [
-        parseFloat(node.latitude),
-        parseFloat(node.longitude),
-      ])
-    );
+    const validCoords = nodes
+      .map((node) => {
+        const lat = parseFloat(node.latitude);
+        const lng = parseFloat(node.longitude);
+        return !isNaN(lat) && !isNaN(lng) ? [lat, lng] : null;
+      })
+      .filter((coord) => coord !== null);
+
+    if (validCoords.length > 0) {
+      const bounds = L.latLngBounds(validCoords);
+      map.fitBounds(bounds);
+    }
     map.fitBounds(bounds);
   } catch (error) {
     // alert("데이터 로드 중 오류 발생: " + error);

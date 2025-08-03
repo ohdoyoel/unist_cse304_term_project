@@ -1,5 +1,5 @@
-// 지도 초기화
-const map = L.map("map");
+// 지도 초기화 (전 세계 지도)
+const map = L.map("map").setView([20, 0], 2);
 
 // ESRI World Imagery (위성 사진) 타일 레이어 추가
 L.tileLayer(
@@ -186,11 +186,12 @@ async function loadData() {
 
       if (!isNaN(lat) && !isNaN(lng)) {
         const color = getClusterColor(clusterId);
-        L.circle([lat, lng], {
+        L.circleMarker([lat, lng], {
           color: color,
           fillColor: color,
           fillOpacity: 1,
-          radius: 40,
+          radius: 3,
+          weight: 0,
         }).addTo(nodeLayerGroup);
       }
     });
@@ -198,20 +199,14 @@ async function loadData() {
     // 엣지 시각화
     visualizeEdges();
 
-    // 지도 뷰 조정
-    const validCoords = nodes
-      .map((node) => {
-        const lat = parseFloat(node.latitude);
-        const lng = parseFloat(node.longitude);
-        return !isNaN(lat) && !isNaN(lng) ? [lat, lng] : null;
-      })
-      .filter((coord) => coord !== null);
-
-    if (validCoords.length > 0) {
-      const bounds = L.latLngBounds(validCoords);
-      map.fitBounds(bounds);
-    }
-    map.fitBounds(bounds);
+    // // 지도 뷰 조정
+    // const validCoords = nodes
+    //   .map((node) => {
+    //     const lat = parseFloat(node.latitude);
+    //     const lng = parseFloat(node.longitude);
+    //     return !isNaN(lat) && !isNaN(lng) ? [lat, lng] : null;
+    //   })
+    //   .filter((coord) => coord !== null);
   } catch (error) {
     // alert("데이터 로드 중 오류 발생: " + error);
     console.error("데이터 로드 중 오류 발생:", error);

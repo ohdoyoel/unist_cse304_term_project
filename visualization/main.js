@@ -165,11 +165,9 @@ async function loadData() {
   try {
     setLoading(true);
 
-    // 현재 환경에 따라 경로 설정 (로컬 또는 GitHub Pages)
-    const isGitHubPages = window.location.hostname.includes("github.io");
-    const basePath = isGitHubPages ? "/unist_cse304_term_project" : "";
-    const nodesFile = `${basePath}/result/${selectedDataset}_${selectedAlgorithm}_nodes.csv`;
-    const edgesFile = `${basePath}/result/${selectedDataset}_${selectedAlgorithm}_edges.csv`;
+    // 데이터 파일 경로 설정 (상대 경로 사용)
+    const nodesFile = `data/${selectedDataset}_${selectedAlgorithm}_nodes.csv`;
+    const edgesFile = `data/${selectedDataset}_${selectedAlgorithm}_edges.csv`;
 
     const [nodes, edges] = await Promise.all([
       loadCSV(nodesFile),

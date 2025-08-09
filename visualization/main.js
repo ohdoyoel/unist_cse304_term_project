@@ -224,3 +224,23 @@ map.on("moveend", visualizeEdges); // 지도 이동/줌 완료 시 엣지 다시
 
 // 초기 데이터 로드
 loadData();
+
+// 지도 정보(위도, 경도, 줌레벨) 표시 함수 추가
+function updateMapInfo() {
+  // 지도 중심 좌표와 줌레벨을 가져옴
+  const center = map.getCenter();
+  const zoom = map.getZoom();
+  // 소수점 4자리로 포맷
+  const lat = center.lat.toFixed(4);
+  const lng = center.lng.toFixed(4);
+  // 표시할 문자열 생성 (줄바꿈을 위해 <br> 사용)
+  const infoText = `latitude: ${lat}<br>longitude: ${lng}<br>zoom: ${zoom}`;
+  // 우측하단 div에 표시 (innerHTML로 줄바꿈 적용)
+  document.getElementById("map-info").innerHTML = infoText;
+}
+
+// 지도 이동, 줌 이벤트 발생 시 정보 갱신
+map.on("moveend", updateMapInfo);
+map.on("zoom", updateMapInfo);
+// 최초 로드 시에도 정보 표시
+updateMapInfo();

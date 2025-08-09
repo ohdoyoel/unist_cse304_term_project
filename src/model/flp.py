@@ -3,6 +3,8 @@ from collections import defaultdict
 from src.utils import compute_fixed_alpha_similarity
 
 def fixed_alpha_label_propagation(data, labels, fixed_alpha, structure_similarity=None, location_similarity=None, max_iter=1000, verbose=False):
+    torch.manual_seed(42)
+
     if structure_similarity is None or location_similarity is None:
         raise ValueError("structure_similarity와 location_similarity는 반드시 제공되어야 합니다.")
 
@@ -67,7 +69,17 @@ def fixed_alpha_label_propagation(data, labels, fixed_alpha, structure_similarit
 
             # 가장 높은 가중치를 가진 레이블 선택
             if neighbor_labels:
-                best_label = max(neighbor_labels.items(), key=lambda x: x[1])[0]
+                # 최대 가중치 찾기
+                max_weight = max(neighbor_labels.values())
+                # 최대 가중치를 가진 레이블들 찾기
+                best_labels = [label for label, weight in neighbor_labels.items() if weight == max_weight]
+                
+                # tie가 발생한 경우 랜덤으로 선택
+                if len(best_labels) > 1:
+                    best_label = best_labels[torch.randint(0, len(best_labels), (1,)).item()]
+                else:
+                    best_label = best_labels[0]
+                
                 if pred_labels[node].item() != best_label:
                     pred_labels_new[node] = best_label
                     label_changes += 1

@@ -21,6 +21,8 @@ def adaptive_label_propagation(data, labels, structure_similarity=None, location
         last_adj_dict: 마지막 유사도 딕셔너리
         iter_info: 반복 과정 정보
     """
+    torch.manual_seed(42)
+
     if structure_similarity is None or location_similarity is None:
         raise ValueError("structure_similarity와 location_similarity는 반드시 제공되어야 합니다.")
 
@@ -54,9 +56,9 @@ def adaptive_label_propagation(data, labels, structure_similarity=None, location
         )
         last_adj_dict = similarity
         
-        # iter_info.append(f"Iter {iter_idx+1} - Avg alpha: {avg_alpha}, Dev alpha: {dev_alpha}")
-        # if verbose:
-        #     print(iter_info[-1])
+        iter_info.append(f"Iter {iter_idx+1} - Avg alpha: {avg_alpha}, Dev alpha: {dev_alpha}")
+        if verbose:
+            print(iter_info[-1])
 
         # 인접 리스트와 가중치 업데이트
         for i in range(n):
@@ -89,7 +91,17 @@ def adaptive_label_propagation(data, labels, structure_similarity=None, location
 
             # 가장 높은 가중치를 가진 레이블 선택
             if neighbor_labels:
-                best_label = max(neighbor_labels.items(), key=lambda x: x[1])[0]
+                # 최대 가중치 찾기
+                max_weight = max(neighbor_labels.values())
+                # 최대 가중치를 가진 레이블들 찾기
+                best_labels = [label for label, weight in neighbor_labels.items() if weight == max_weight]
+                
+                # tie가 발생한 경우 랜덤으로 선택
+                if len(best_labels) > 1:
+                    best_label = best_labels[torch.randint(0, len(best_labels), (1,)).item()]
+                else:
+                    best_label = best_labels[0]
+                
                 if pred_labels[node].item() != best_label:
                     pred_labels_new[node] = best_label
                     label_changes += 1

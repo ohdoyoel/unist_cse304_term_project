@@ -14,6 +14,8 @@ def label_propagation(edge_index, labels, max_iter=1000, verbose=True):
         pred_labels: 예측된 레이블
         iter_info: 반복 과정 정보
     """
+    torch.manual_seed(42)
+
     n = labels.size(0)
     prev_unique_labels = n  # 초기값 설정
     prev_changes = n  # 초기값 설정
@@ -44,7 +46,22 @@ def label_propagation(edge_index, labels, max_iter=1000, verbose=True):
             neighbor_labels = pred_labels[adj_list[node]]
             # 가장 많이 등장하는 레이블 선택
             values, counts = torch.unique(neighbor_labels, return_counts=True)
-            pred_labels_new[node] = values[counts.argmax()]
+            
+            # tie시 첫번째 레이블 선택
+            # pred_labels_new[node] = values[counts.argmax()]
+
+            # tie시 랜덤 선택
+            max_count = counts.max()
+            # 최대 빈도수를 가진 레이블들 찾기
+            max_indices = torch.where(counts == max_count)[0]
+            
+            if len(max_indices) > 1:
+                # 동률이 발생한 경우, 랜덤으로 선택
+                tied_labels = values[max_indices]
+                random_idx = torch.randint(0, len(tied_labels), (1,))
+                pred_labels_new[node] = tied_labels[random_idx]
+            else:
+                pred_labels_new[node] = values[counts.argmax()]
             
             if pred_labels_new[node] != pred_labels[node]:
                 label_changes += 1

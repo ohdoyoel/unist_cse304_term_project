@@ -2,6 +2,164 @@ import torch
 import numpy as np
 import os
 import pandas as pd
+from collections import deque, defaultdict
+
+def find_connected_components(edges, num_nodes, directed=False):
+    """
+    그래프의 연결된 구성요소를 찾는 함수
+    
+    Args:
+        edges: 엣지 리스트 (2 x num_edges 형태)
+        num_nodes: 노드 개수
+        directed: 방향 그래프 여부 (False: WCC, True: SCC)
+    
+    Returns:
+        components: 각 구성요소별 노드 리스트
+        largest_component: 가장 큰 구성요소의 노드와 엣지 정보
+    """
+    # 인접 리스트 생성
+    graph = defaultdict(list)
+    for i in range(edges.shape[1]):
+        u, v = edges[0, i], edges[1, i]
+        graph[u].append(v)
+        if not directed:  # WCC의 경우 양방향으로 추가
+            graph[v].append(u)
+    
+    visited = set()
+    components = []
+    
+    for node in range(num_nodes):
+        if node not in visited:
+            # BFS로 연결된 구성요소 찾기
+            component = []
+            queue = deque([node])
+            visited.add(node)
+            
+            while queue:
+                current = queue.popleft()
+                component.append(current)
+                
+                for neighbor in graph[current]:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+            
+            components.append(component)
+    
+    # 가장 큰 구성요소 찾기
+    largest_component = max(components, key=len)
+    largest_nodes = set(largest_component)
+    
+    # 가장 큰 구성요소 내의 엣지 개수 계산
+    largest_edges = 0
+    for i in range(edges.shape[1]):
+        u, v = edges[0, i], edges[1, i]
+        if u in largest_nodes and v in largest_nodes:
+            largest_edges += 1
+    
+    return components, {
+        'nodes': len(largest_component),
+        'edges': largest_edges,
+        'fraction_nodes': len(largest_component) / num_nodes,
+        'fraction_edges': largest_edges / edges.shape[1] if edges.shape[1] > 0 else 0
+    }
+
+def find_strongly_connected_components(edges, num_nodes):
+    """
+    코사라주 알고리즘을 사용하여 강연결 구성요소(SCC)를 찾는 함수 (반복문 기반)
+    
+    Args:
+        edges: 엣지 리스트 (2 x num_edges 형태)
+        num_nodes: 노드 개수
+    
+    Returns:
+        components: 각 SCC별 노드 리스트
+        largest_component: 가장 큰 SCC의 노드와 엣지 정보
+    """
+    # 원본 그래프와 역방향 그래프 생성
+    graph = defaultdict(list)
+    reverse_graph = defaultdict(list)
+    
+    for i in range(edges.shape[1]):
+        u, v = edges[0, i], edges[1, i]
+        graph[u].append(v)
+        reverse_graph[v].append(u)
+    
+    # 1단계: 원본 그래프에서 DFS 완료 순서 기록 (반복문 기반)
+    visited = set()
+    finish_order = []
+    
+    for start_node in range(num_nodes):
+        if start_node not in visited:
+            # 스택을 사용한 반복적 DFS
+            stack = [(start_node, False)]  # (노드, 완료 여부)
+            
+            while stack:
+                node, finished = stack.pop()
+                
+                if finished:
+                    # 노드 탐색 완료
+                    finish_order.append(node)
+                else:
+                    if node not in visited:
+                        visited.add(node)
+                        stack.append((node, True))  # 완료 표시를 위해 다시 추가
+                        
+                        # 인접 노드들을 스택에 추가
+                        for neighbor in graph[node]:
+                            if neighbor not in visited:
+                                stack.append((neighbor, False))
+    
+    # 2단계: 역방향 그래프에서 완료 순서의 역순으로 DFS (반복문 기반)
+    visited = set()
+    components = []
+    
+    for start_node in reversed(finish_order):
+        if start_node not in visited:
+            # 스택을 사용한 반복적 DFS
+            component = []
+            stack = [start_node]
+            
+            while stack:
+                node = stack.pop()
+                if node not in visited:
+                    visited.add(node)
+                    component.append(node)
+                    
+                    # 인접 노드들을 스택에 추가
+                    for neighbor in reverse_graph[node]:
+                        if neighbor not in visited:
+                            stack.append(neighbor)
+            
+            if component:
+                components.append(component)
+    
+    # 가장 큰 SCC 찾기
+    if not components:
+        # SCC가 없는 경우 (빈 그래프)
+        return [], {
+            'nodes': 0,
+            'edges': 0,
+            'fraction_nodes': 0,
+            'fraction_edges': 0
+        }
+    
+    largest_component = max(components, key=len)
+    largest_nodes = set(largest_component)
+    
+    # 가장 큰 SCC 내의 엣지 개수 계산
+    largest_edges = 0
+    for i in range(edges.shape[1]):
+        u, v = edges[0, i], edges[1, i]
+        if u in largest_nodes and v in largest_nodes:
+            largest_edges += 1
+    
+    return components, {
+        'nodes': len(largest_component),
+        'edges': largest_edges,
+        'fraction_nodes': len(largest_component) / num_nodes,
+        'fraction_edges': largest_edges / edges.shape[1] if edges.shape[1] > 0 else 0
+    }
 
 def load_brightkite(sample_size=None):
     # Brightkite_edges.txt 로딩
@@ -68,6 +226,10 @@ def load_brightkite(sample_size=None):
             longitude[new_id] = row['lon']
             latitude[new_id] = row['lat']
 
+    # WCC와 SCC 정보 계산
+    _, wcc_info = find_connected_components(edges_remapped, num_nodes, directed=False)
+    _, scc_info = find_strongly_connected_components(edges_remapped, num_nodes)
+    
     # Data 객체 생성
     data = type('Data', (), {})()
     data.edge_index = torch.tensor(edges_remapped, dtype=torch.long)
@@ -80,6 +242,20 @@ def load_brightkite(sample_size=None):
 
     # 노드 ID 매핑 정보도 저장
     data.node_map = node_map
+    
+    # WCC와 SCC 정보 추가
+    data.largest_wcc_nodes = wcc_info['nodes']
+    data.largest_wcc_edges = wcc_info['edges']
+    data.largest_wcc_nodes_fraction = wcc_info['fraction_nodes']
+    data.largest_wcc_edges_fraction = wcc_info['fraction_edges']
+    
+    data.largest_scc_nodes = scc_info['nodes']
+    data.largest_scc_edges = scc_info['edges']
+    data.largest_scc_nodes_fraction = scc_info['fraction_nodes']
+    data.largest_scc_edges_fraction = scc_info['fraction_edges']
+    
+    # 평균 차수 추가
+    data.avg_degree = 2 * edges_remapped.shape[1] / num_nodes if num_nodes > 0 else 0
     
     return data, 1
 
@@ -149,6 +325,10 @@ def load_gowalla(sample_size=None):
             longitude[new_id] = row['lon']
             latitude[new_id] = row['lat']
 
+    # WCC와 SCC 정보 계산
+    _, wcc_info = find_connected_components(edges_remapped, num_nodes, directed=False)
+    _, scc_info = find_strongly_connected_components(edges_remapped, num_nodes)
+    
     # Data 객체 생성
     data = type('Data', (), {})()
     data.edge_index = torch.tensor(edges_remapped, dtype=torch.long)
@@ -161,6 +341,20 @@ def load_gowalla(sample_size=None):
     
     # 노드 ID 매핑 정보도 저장
     data.node_map = node_map
+    
+    # WCC와 SCC 정보 추가
+    data.largest_wcc_nodes = wcc_info['nodes']
+    data.largest_wcc_edges = wcc_info['edges']
+    data.largest_wcc_nodes_fraction = wcc_info['fraction_nodes']
+    data.largest_wcc_edges_fraction = wcc_info['fraction_edges']
+    
+    data.largest_scc_nodes = scc_info['nodes']
+    data.largest_scc_edges = scc_info['edges']
+    data.largest_scc_nodes_fraction = scc_info['fraction_nodes']
+    data.largest_scc_edges_fraction = scc_info['fraction_edges']
+    
+    # 평균 차수 추가
+    data.avg_degree = 2 * edges_remapped.shape[1] / num_nodes if num_nodes > 0 else 0
     
     return data, 1
 
@@ -238,6 +432,10 @@ def load_yelp(sample_size=None):
             longitude[new_id] = row['lon']
             latitude[new_id] = row['lat']
 
+    # WCC와 SCC 정보 계산
+    _, wcc_info = find_connected_components(edges_remapped, num_nodes, directed=False)
+    _, scc_info = find_strongly_connected_components(edges_remapped, num_nodes)
+    
     # Data 객체 생성
     data = type('Data', (), {})()
     data.edge_index = torch.tensor(edges_remapped, dtype=torch.long)
@@ -250,6 +448,20 @@ def load_yelp(sample_size=None):
     
     # 노드 ID 매핑 정보도 저장
     data.node_map = node_map
+    
+    # WCC와 SCC 정보 추가
+    data.largest_wcc_nodes = wcc_info['nodes']
+    data.largest_wcc_edges = wcc_info['edges']
+    data.largest_wcc_nodes_fraction = wcc_info['fraction_nodes']
+    data.largest_wcc_edges_fraction = wcc_info['fraction_edges']
+    
+    data.largest_scc_nodes = scc_info['nodes']
+    data.largest_scc_edges = scc_info['edges']
+    data.largest_scc_nodes_fraction = scc_info['fraction_nodes']
+    data.largest_scc_edges_fraction = scc_info['fraction_edges']
+    
+    # 평균 차수 추가
+    data.avg_degree = 2 * edges_remapped.shape[1] / num_nodes if num_nodes > 0 else 0
     
     return data, 1
 

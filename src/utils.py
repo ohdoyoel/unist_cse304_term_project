@@ -47,8 +47,8 @@ def print_distribution(values, bins=10, name=None):
         count = hist[i]
         percentage = (count / total) * 100
         print(f"  {start:.1f}-{end:.1f}: {count:5d} ({percentage:5.1f}%)")
-    print(f"  평균: {np.mean(values):.3f}, 표준편차: {np.std(values):.3f}")
-    print(f"  최소: {np.min(values):.3f}, 최대: {np.max(values):.3f}")
+    print(f"  평균: {np.mean(values):.5f}, 표준편차: {np.std(values):.5f}")
+    print(f"  최소: {np.min(values):.5f}, 최대: {np.max(values):.5f}")
 
 def compute_jaccard_similarity(data, edge_index=None):
     """
@@ -123,7 +123,7 @@ def compute_location_similarity(data, edge_index=None):
 
     # 유사도 계산 (거리가 멀수록 유사도는 감소)
     max_dist = max(distances.values())
-    similarities = {k: 1 - (v/max_dist)**2 for k, v in distances.items()}
+    similarities = {k: 1 - v/max_dist for k, v in distances.items()}
     
     # 유사도 z-score 정규화
     # mean = np.mean(list(similarities.values()))
@@ -511,98 +511,86 @@ def get_memory_usage():
         'percent': process.memory_percent()  # 시스템 메모리 대비 비율
     }
 
-def evaluate_and_save_results(data, pred_labels, result_filename, method_name, elapsed_time, iter_info=[], result_dir='result'):
+# 평균 및 표준편차 계산
+def mean_std(arr):
+    return np.mean(arr), np.std(arr)
+
+def evaluate_and_save_results(data, pred, result_filename, method_name, times, iter_info=[], result_dir='result'):
     """
-    Evaluate clustering results and save to a file.
+    여러 번의 실험 결과(pred)를 받아 각 지표의 평균과 표준편차를 출력 및 파일에 저장
     """
     print(f"# of Nodes: {data.num_nodes}")
-    print(f"Elapsed Time: {elapsed_time:.3f} seconds")
-    # memory_usage = get_memory_usage()
-    # print(f"Memory Usage:")
-    # print(f"  RSS: {memory_usage['rss']:.2f} MB")
-    # print(f"  VMS: {memory_usage['vms']:.2f} MB")
-    # if 'uss' in memory_usage:  # Linux only
-    #     print(f"  USS: {memory_usage['uss']:.2f} MB")
-    # print(f"  Memory Usage %: {memory_usage['percent']:.2f}%")
+    print(f"# of Experiments: {len(pred)}")
 
-    print(f"# of Labels: {len(np.unique(pred_labels))}")
-    # 각 메트릭 계산 시 오류 발생하면 -9 반환
-    sigma = 5000.0
-    try:
-        sn_modularity_score = sn_modularity(data, pred_labels, sigma=sigma)
-    except Exception as e:
-        print(f"Error calculating SN Modularity: {str(e)}")
-        sn_modularity_score = -9
-    print(f"SN Modularity: {sn_modularity_score} (sigma={sigma})")
-    # sigma = [1, 3, 6, 10, 100, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
-    # sn_modularity_scores = []
-    # for s in sigma:
-    #     try:
-    #         sn_modularity_score = sn_modularity(data, pred_labels, sigma=s)
-    #         sn_modularity_scores.append(sn_modularity_score)
-    #         print(f"SN Modularity: {sn_modularity_score} (sigma={s})")
-    #     except Exception as e:
-    #         print(f"Error calculating SN Modularity: {str(e)}")
-    #         sn_modularity_scores.append(-9)
-    try:
-        modularity_score = modularity(data.edge_index, pred_labels)
-    except Exception as e:
-        print(f"Error calculating Modularity: {str(e)}")
-        modularity_score = -9
-    print(f"Modularity: {modularity_score}")
-    try:
-        conductance_score = conductance(data.edge_index, pred_labels)
-    except Exception as e:
-        print(f"Error calculating Conductance: {str(e)}")
-        conductance_score = -9
-    print(f"Conductance: {conductance_score}")
-    try:
-        intra_cluster_distance = intra_cluster_avg_distance(data, pred_labels)
-    except Exception as e:
-        print(f"Error calculating Intra-cluster Distance: {str(e)}")
-        intra_cluster_distance = -9
-    print(f"Intra-cluster Distance: {intra_cluster_distance}")
-    # try:
-    #     if hasattr(data, 'x') and data.x is not None and data.x.shape[1] == 2:  # 도(degree) 단위의 좌표 사용
-    #         # data.x의 첫 번째 열이 위도, 두 번째 열이 경도
-    #         # sklearn.metrics.pairwise.haversine_distances는 도(degree) 단위를 기대하므로 data.x 사용
-    #         coordinates = data.x.cpu().numpy() if hasattr(data.x, 'cpu') else data.x
-    #         silhouette_score_value = spatial_silhouette(coordinates, pred_labels, metric='haversine')
-    #     else:
-    #         print("Warning: No valid coordinate data found in data.x. Skipping spatial silhouette calculation.")
-    #         silhouette_score_value = -9
-    # except Exception as e:
-    #     print(f"Error calculating spatial silhouette: {str(e)}")
-    #     silhouette_score_value = -9
-    # print(f"Silhouette Score: {silhouette_score_value}")
+    time_mean, time_std = mean_std(times)
+    print(f"Elapsed Time: {time_mean:.5f} ± {time_std:.5f} seconds")
     
-    # 각 클러스터의 노드 수 계산
-    # _, label_counts = np.unique(pred_labels, return_counts=True)
-    # print_distribution(label_counts, bins=100, name="클러스터별 노드 수")
+    # 지표별 결과 저장용 리스트
+    sn_modularity_scores = []
+    modularity_scores = []
+    conductance_scores = []
+    intra_cluster_distances = []
 
+    num_labels_list = [len(np.unique(pred_labels)) for pred_labels in pred]
+    nlabel_mean, nlabel_std = mean_std(num_labels_list)
+    print(f"# of Labels: {nlabel_mean:.5f} ± {nlabel_std:.5f}")
+    
+    sigma = 5000.0
+    for pred_labels in pred:
+        try:
+            sn_modularity_score = sn_modularity(data, pred_labels, sigma=sigma)
+        except Exception as e:
+            print(f"Error calculating SN Modularity: {str(e)}")
+            sn_modularity_score = -9
+        sn_modularity_scores.append(sn_modularity_score)
+    sn_mod_mean, sn_mod_std = mean_std(sn_modularity_scores)
+    print(f"SN Modularity: {sn_mod_mean:.5f} ± {sn_mod_std:.5f} (sigma={sigma})")
+    
+    for pred_labels in pred:
+        try:
+            modularity_score = modularity(data.edge_index, pred_labels)
+        except Exception as e:
+            print(f"Error calculating Modularity: {str(e)}")
+            modularity_score = -9
+        modularity_scores.append(modularity_score)
+    mod_mean, mod_std = mean_std(modularity_scores)
+    print(f"Modularity: {mod_mean:.5f} ± {mod_std:.5f}")
+
+    for pred_labels in pred:
+        try:
+            conductance_score = conductance(data.edge_index, pred_labels)
+        except Exception as e:
+            print(f"Error calculating Conductance: {str(e)}")
+            conductance_score = -9
+        conductance_scores.append(conductance_score)
+    cond_mean, cond_std = mean_std(conductance_scores)
+    print(f"Conductance: {cond_mean:.5f} ± {cond_std:.5f}")
+
+    for pred_labels in pred:
+        try:
+            intra_cluster_distance = intra_cluster_avg_distance(data, pred_labels)
+        except Exception as e:
+            print(f"Error calculating Intra-cluster Distance: {str(e)}")
+            intra_cluster_distance = -9
+        intra_cluster_distances.append(intra_cluster_distance)
+    intra_mean, intra_std = mean_std(intra_cluster_distances)
+    print(f"Intra-cluster Distance: {intra_mean:.5f} ± {intra_std:.5f}")
+    
+    
+    # 파일에 저장
     with open(os.path.join(result_dir, result_filename), 'a') as f:
         f.write("\n")
         f.write(f"{method_name}\n")
         for info in iter_info:
             f.write(f"{info}\n")
         f.write(f"# of Nodes: {data.num_nodes}\n")
-        f.write(f"# of Labels: {len(np.unique(pred_labels))}\n")
-        f.write(f"SN Modularity: {sn_modularity_score} (sigma={sigma})\n")
-        # for s, score in zip(sigma, sn_modularity_scores):
-        #     f.write(f"SN Modularity: {score} (sigma={s})\n")
-        f.write(f"Modularity: {modularity_score}\n")
-        f.write(f"Conductance: {conductance_score}\n")
-        # f.write(f"Avg Clustering Coefficient: {avg_clustering_coeff}\n")
-        # f.write(f"Normalized Cut: {normalized_cut_score}\n")
-        f.write(f"Intra-cluster Distance: {intra_cluster_distance}\n")
-        # f.write(f"Silhouette Score: {silhouette_score_value}\n")
-        f.write(f"Elapsed Time: {elapsed_time:.3f} seconds\n")
-        # f.write(f"Memory Usage:")
-        # f.write(f"  RSS: {memory_usage['rss']:.2f} MB\n")
-        # f.write(f"  VMS: {memory_usage['vms']:.2f} MB\n")
-        # if 'uss' in memory_usage:  # Linux only
-        #     f.write(f"  USS: {memory_usage['uss']:.2f} MB\n")
-        # f.write(f"  Memory Usage %: {memory_usage['percent']:.2f}%\n")
+        f.write(f"# of Experiments: {len(pred)}\n")
+        f.write(f"Elapsed Time: {time_mean:.5f} ± {time_std:.5f} seconds\n")
+        f.write(f"# of Labels: {nlabel_mean:.5f} ± {nlabel_std:.5f}\n")
+        f.write(f"SN Modularity: {sn_mod_mean:.5f} ± {sn_mod_std:.5f} (sigma={sigma})\n")
+        f.write(f"Modularity: {mod_mean:.5f} ± {mod_std:.5f}\n")
+        f.write(f"Conductance: {cond_mean:.5f} ± {cond_std:.5f}\n")
+        f.write(f"Intra-cluster Distance: {intra_mean:.5f} ± {intra_std:.5f}\n")
 
 def scipy_sparse_to_torch_sparse(sparse_mtx):
     """

@@ -21,8 +21,6 @@ def adaptive_label_propagation(data, labels, structure_similarity=None, location
         last_adj_dict: 마지막 유사도 딕셔너리
         iter_info: 반복 과정 정보
     """
-    torch.manual_seed(42)
-
     if structure_similarity is None or location_similarity is None:
         raise ValueError("structure_similarity와 location_similarity는 반드시 제공되어야 합니다.")
 

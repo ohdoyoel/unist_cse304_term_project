@@ -1,6 +1,6 @@
 import torch
 
-def label_propagation(edge_index, labels, max_iter=1000, verbose=True):
+def label_propagation(edge_index, labels, max_iter=1000, verbose=False):
     """
     Majority voting 기반의 Label Propagation 알고리즘을 수행합니다.
     
@@ -14,8 +14,6 @@ def label_propagation(edge_index, labels, max_iter=1000, verbose=True):
         pred_labels: 예측된 레이블
         iter_info: 반복 과정 정보
     """
-    torch.manual_seed(42)
-
     n = labels.size(0)
     prev_unique_labels = n  # 초기값 설정
     prev_changes = n  # 초기값 설정

@@ -3,8 +3,6 @@ from collections import defaultdict
 from src.utils import compute_fixed_alpha_similarity
 
 def fixed_alpha_label_propagation(data, labels, fixed_alpha, structure_similarity=None, location_similarity=None, max_iter=1000, verbose=False):
-    torch.manual_seed(42)
-
     if structure_similarity is None or location_similarity is None:
         raise ValueError("structure_similarity와 location_similarity는 반드시 제공되어야 합니다.")
 

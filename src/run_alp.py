@@ -36,32 +36,43 @@ def save_result(data, pred_lp, file):
     save_graph_result(nodes_df, edges_df, file)
 
 if __name__ == '__main__':
-    dataset_name = 'gowalla'
-    data, _ = load_dataset(dataset_name)
-    num_nodes = data.num_nodes
-    print(dataset_name, "valid nodes:", num_nodes, "valid edges:", data.edge_index.shape[1])
-    labels = torch.arange(num_nodes)
-    
-    # 유사도 계산
-    structure_similarity = compute_jaccard_similarity(data)
-    location_similarity = compute_location_similarity(data)
+    dataset_names = ['yelp', 'brightkite', 'gowalla']
+    for dataset_name in dataset_names:
+        # dataset_name = 'brightkite'
+        data, _ = load_dataset(dataset_name)
+        num_nodes = data.num_nodes
+        print(f"Dataset: {dataset_name}, Number of nodes: {num_nodes}, Number of edges: {data.edge_index.shape[1]}")
+        print(f"Average degree: {data.avg_degree}")
+        # print(f"Largest WCC nodes: {data.largest_wcc_nodes} ({data.largest_wcc_nodes_fraction}), Largest WCC edges: {data.largest_wcc_edges} ({data.largest_wcc_edges_fraction})")
+        # print(f"Largest SCC nodes: {data.largest_scc_nodes} ({data.largest_scc_nodes_fraction}), Largest SCC edges: {data.largest_scc_edges} ({data.largest_scc_edges_fraction})")
+        
+        # 유사도 계산
+        structure_similarity = compute_jaccard_similarity(data)
+        location_similarity = compute_location_similarity(data)
 
-    # 라벨 전파
-    start_time = time.time()
-    pred_lp, last_adj_dict, iter_info = adaptive_label_propagation(
-        data, labels,
-        structure_similarity=structure_similarity,
-        location_similarity=location_similarity,
-        verbose=True
-    )
-    elapsed_time = time.time() - start_time
+        pred = []
+        times = []
+        iter_info = []
+        trial = 1
+        for i in range(trial):
+            print(f"ALP on {dataset_name}: Experiment {i+1} of {trial} Started...")
+            start_time = time.time()
+            labels = torch.arange(num_nodes)
+            pred_lp, _, iter_info = adaptive_label_propagation(
+                data, labels,
+                structure_similarity=structure_similarity,
+                location_similarity=location_similarity
+            )
+            pred.append(pred_lp)
+            save_result(data, pred_lp, dataset_name + '_alp')
+            elapsed_time = time.time() - start_time
+            times.append(elapsed_time)
+            print(f"ALP on {dataset_name}: Experiment {i+1} of {trial} Ended in {elapsed_time:.5f} seconds")
 
-    save_result(data, pred_lp, dataset_name + '_alp')
-
-    evaluate_and_save_results(
-        data, pred_lp,
-        dataset_name + "_alp_result.txt",
-        "Label Propagation (Adaptive Similarity):",
-        elapsed_time,
-        iter_info
-    )
+        evaluate_and_save_results(
+            data, pred,
+            dataset_name + "_alp_result.txt",
+            "Label Propagation (Adaptive Similarity):",
+            times,
+            iter_info
+        )

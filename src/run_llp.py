@@ -37,33 +37,39 @@ def save_result(data, pred_lp, file):
     save_graph_result(nodes_df, edges_df, file)
 
 if __name__ == '__main__':
-    dataset_name = 'gowalla'
-    data, _ = load_dataset(dataset_name)
-    num_nodes = data.num_nodes
-    print(dataset_name, "valid nodes:", num_nodes, "valid edges:", data.edge_index.shape[1])
-    labels = torch.arange(num_nodes)
-    
-    # 유사도 계산
-    structure_similarity = compute_jaccard_similarity(data)
-    location_similarity = compute_location_similarity(data)
+    dataset_names = ['brightkite', 'gowalla']
+    for dataset_name in dataset_names:
+        # dataset_name = 'brightkite'
+        data, _ = load_dataset(dataset_name)
+        num_nodes = data.num_nodes
+        print(dataset_name, "valid nodes:", num_nodes, "valid edges:", data.edge_index.shape[1])
+        
+        # 유사도 계산
+        structure_similarity = compute_jaccard_similarity(data)
+        location_similarity = compute_location_similarity(data)
 
-    # 라벨 전파
-    start_time = time.time()
-    pred_lp, last_adj_dict, iter_info = fixed_alpha_label_propagation(
-        data, labels,
-        fixed_alpha=0.0,
-        structure_similarity=structure_similarity,
-        location_similarity=location_similarity,
-        verbose=True
-    )
-    elapsed_time = time.time() - start_time
+        pred = []
+        times = []
+        trial = 50
+        for i in range(trial):
+            print(f"LLP on {dataset_name}: Experiment {i+1} of {trial} Started...")
+            start_time = time.time()
+            labels = torch.arange(num_nodes)
+            pred_lp, _, _ = fixed_alpha_label_propagation(
+                data, labels,
+                fixed_alpha=0.0,
+                structure_similarity=structure_similarity,
+                location_similarity=location_similarity,
+            )
+            pred.append(pred_lp)
+            save_result(data, pred_lp, dataset_name + '_llp')
+            elapsed_time = time.time() - start_time
+            times.append(elapsed_time)
+            print(f"LLP on {dataset_name}: Experiment {i+1} of {trial} Ended in {elapsed_time:.5f} seconds")
 
-    save_result(data, pred_lp, dataset_name + '_llp')
-
-    evaluate_and_save_results(
-        data, pred_lp,
-        dataset_name + "_llp_result.txt",
-        "Label Propagation (Location Similarity):",
-        elapsed_time,
-        iter_info
-    )
+        evaluate_and_save_results(
+            data, pred,
+            dataset_name + "_llp_result.txt",
+            "Label Propagation (Location Similarity):",
+            times
+        )

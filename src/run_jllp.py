@@ -37,7 +37,7 @@ def save_result(data, pred_lp, file):
     save_graph_result(nodes_df, edges_df, file)
 
 if __name__ == '__main__':
-    dataset_names = ['gowalla']
+    dataset_names = ['yelp', 'brightkite', 'gowalla']
     for dataset_name in dataset_names:
         # dataset_name = 'brightkite'
         data, _ = load_dataset(dataset_name)
@@ -59,7 +59,7 @@ if __name__ == '__main__':
                 data, labels,
                 fixed_alpha=0.5,
                 structure_similarity=structure_similarity,
-                location_similarity=location_similarity
+                location_similarity=location_similarity,
             )
             pred.append(pred_lp)
             save_result(data, pred_lp, dataset_name + '_jllp')

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from src.dataset import load_dataset
 from src.model.alp import adaptive_label_propagation
-from src.utils import compute_jaccard_similarity, compute_location_similarity, save_graph_result, evaluate_and_save_results
+from src.utils import compute_jaccard_similarity, compute_location_similarity, save_graph_result, evaluate_and_save_results, compare_clustering_results
 
 def get_long_lat(data, num_nodes):
     longitude = (
@@ -37,42 +37,97 @@ def save_result(data, pred_lp, file):
 
 if __name__ == '__main__':
     dataset_names = ['yelp', 'brightkite', 'gowalla']
+    # dataset_names = ['custom']
     for dataset_name in dataset_names:
         # dataset_name = 'brightkite'
         data, _ = load_dataset(dataset_name)
         num_nodes = data.num_nodes
         print(f"Dataset: {dataset_name}, Number of nodes: {num_nodes}, Number of edges: {data.edge_index.shape[1]}")
         print(f"Average degree: {data.avg_degree}")
-        # print(f"Largest WCC nodes: {data.largest_wcc_nodes} ({data.largest_wcc_nodes_fraction}), Largest WCC edges: {data.largest_wcc_edges} ({data.largest_wcc_edges_fraction})")
-        # print(f"Largest SCC nodes: {data.largest_scc_nodes} ({data.largest_scc_nodes_fraction}), Largest SCC edges: {data.largest_scc_edges} ({data.largest_scc_edges_fraction})")
-        
+
         # 유사도 계산
         structure_similarity = compute_jaccard_similarity(data)
         location_similarity = compute_location_similarity(data)
 
-        pred = []
-        times = []
-        iter_info = []
-        trial = 1
-        for i in range(trial):
-            print(f"ALP on {dataset_name}: Experiment {i+1} of {trial} Started...")
-            start_time = time.time()
-            labels = torch.arange(num_nodes)
-            pred_lp, _, iter_info = adaptive_label_propagation(
-                data, labels,
-                structure_similarity=structure_similarity,
-                location_similarity=location_similarity
-            )
-            pred.append(pred_lp)
-            save_result(data, pred_lp, dataset_name + '_alp')
-            elapsed_time = time.time() - start_time
-            times.append(elapsed_time)
-            print(f"ALP on {dataset_name}: Experiment {i+1} of {trial} Ended in {elapsed_time:.5f} seconds")
+        # Ex 1
 
-        evaluate_and_save_results(
-            data, pred,
-            dataset_name + "_alp_result.txt",
-            "Label Propagation (Adaptive Similarity):",
-            times,
-            iter_info
-        )
+        for order in ['original', 'reverse', 'random']:
+            print(f"ALP on {dataset_name}: Experiment {order} Started...")
+            pred = []
+            times = []
+            iter_info = []
+            trial = 50
+            for i in range(trial):
+                print(f"ALP on {dataset_name}: Experiment {order} {i+1} of {trial} Started...")
+                start_time = time.time()
+                labels = torch.arange(num_nodes)
+                pred_lp, _, iter_info, alpha_info = adaptive_label_propagation(
+                    data, labels,
+                    structure_similarity=structure_similarity,
+                    location_similarity=location_similarity,
+                    verbose=True,
+                    order=order
+                )
+                pred.append(pred_lp)
+                save_result(data, pred_lp, dataset_name + '_alp_' + order)
+                elapsed_time = time.time() - start_time
+                times.append(elapsed_time)
+                print(f"ALP on {dataset_name}: Experiment {order} {i+1} of {trial} Ended in {elapsed_time:.5f} seconds")
+            print(f"ALP on {dataset_name}: Experiment {order} Ended")
+
+            evaluate_and_save_results(
+                data, pred,
+                dataset_name + "_alp_result.txt",
+                "Label Propagation (Adaptive Similarity) " + order + ":",
+                times,
+                iter_info
+            )
+
+        # Ex 2
+
+        # pred = []
+        # times = []
+        # iter_info = []
+        # trial = 50
+        # for i in range(trial):
+        #     print(f"ALP on {dataset_name}: Experiment {i+1} of {trial} Started...")
+        #     start_time = time.time()
+        #     labels = torch.arange(num_nodes)
+        #     pred_lp, _, iter_info, alpha_info = adaptive_label_propagation(
+        #         data, labels,
+        #         structure_similarity=structure_similarity,
+        #         location_similarity=location_similarity,
+        #         verbose=True
+        #     )
+        #     pred.append(pred_lp)
+        #     save_result(data, pred_lp, dataset_name + '_alp')
+        #     elapsed_time = time.time() - start_time
+        #     times.append(elapsed_time)
+        #     print(f"ALP on {dataset_name}: Experiment {i+1} of {trial} Ended in {elapsed_time:.5f} seconds")
+
+        # evaluate_and_save_results(
+        #     data, pred,
+        #     dataset_name + "_alp_result.txt",
+        #     "Label Propagation (Adaptive Similarity):",
+        #     times,
+        #     iter_info
+        # )
+        
+        # alpha 값들을 CSV 파일로 저장
+        # alpha_df = pd.DataFrame(alpha_info)
+        # alpha_df.to_csv(f"result/{dataset_name}_alpha.csv", index=False)
+
+        # Ex 3 : Custom Dataset
+
+        # print(f"ALP on {dataset_name}: Experiment Started...")
+        # start_time = time.time()
+        # labels = torch.arange(num_nodes)
+        # pred_lp, _, iter_info, alpha_info = adaptive_label_propagation(
+        #     data, labels,
+        #     structure_similarity=structure_similarity,
+        #     location_similarity=location_similarity,
+        #     verbose=True,
+        #     save_plot=True
+        # )
+        # print(f"ALP on {dataset_name}: Experiment Ended")
+        # print(pred_lp)

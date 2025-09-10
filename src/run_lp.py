@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from src.dataset import load_dataset
 from src.model.lp import label_propagation
-from src.utils import evaluate_and_save_results, save_graph_result
+from src.utils import evaluate_and_save_results, save_graph_result, compare_clustering_results
 
 def get_long_lat(data, num_nodes):
     longitude = (
@@ -44,27 +44,55 @@ if __name__ == '__main__':
         num_nodes = data.num_nodes
         print(f"Dataset: {dataset_name}, Number of nodes: {num_nodes}, Number of edges: {data.edge_index.shape[1]}")
         print(f"Average degree: {data.avg_degree}")
-        print(f"Largest WCC nodes: {data.largest_wcc_nodes} ({data.largest_wcc_nodes_fraction}), Largest WCC edges: {data.largest_wcc_edges} ({data.largest_wcc_edges_fraction})")
-        print(f"Largest SCC nodes: {data.largest_scc_nodes} ({data.largest_scc_nodes_fraction}), Largest SCC edges: {data.largest_scc_edges} ({data.largest_scc_edges_fraction})")
+        # print(f"Largest WCC nodes: {data.largest_wcc_nodes} ({data.largest_wcc_nodes_fraction}), Largest WCC edges: {data.largest_wcc_edges} ({data.largest_wcc_edges_fraction})")
+        # print(f"Largest SCC nodes: {data.largest_scc_nodes} ({data.largest_scc_nodes_fraction}), Largest SCC edges: {data.largest_scc_edges} ({data.largest_scc_edges_fraction})")
         
-        pred = []
-        times = []
-        trial = 1
-        for i in range(trial):
-            print(f"LP on {dataset_name}: Experiment {i+1} of {trial} Started...")
-            start_time = time.time()
-            labels = torch.arange(num_nodes)
-            pred_lp, _ = label_propagation(data.edge_index, labels)
-            pred.append(pred_lp)
-            save_result(data, pred_lp, dataset_name + '_lp')
-            elapsed_time = time.time() - start_time
-            times.append(elapsed_time)
-            print(f"LP on {dataset_name}: Experiment {i+1} of {trial} Ended in {elapsed_time:.5f} seconds")
+        for order in ['original', 'reverse', 'random']:
+            print(f"LP on {dataset_name}: Experiment {order} Started...")
+            pred = []
+            times = []
+            iter_info = []
+            trial = 50
+            for i in range(trial):
+                print(f"LP on {dataset_name}: Experiment {order} {i+1} of {trial} Started...")
+                start_time = time.time()
+                labels = torch.arange(num_nodes)
+                pred_lp, _ = label_propagation(data.edge_index, labels, order=order)
+                pred.append(pred_lp)
+                save_result(data, pred_lp, dataset_name + '_lp_' + order)
+                elapsed_time = time.time() - start_time
+                times.append(elapsed_time)
+                print(f"LP on {dataset_name}: Experiment {order} {i+1} of {trial} Ended in {elapsed_time:.5f} seconds")
+            print(f"LP on {dataset_name}: Experiment {order} Ended")
+
+            evaluate_and_save_results(
+                data, pred,
+                dataset_name + "_lp_result.txt",
+                "Label Propagation (Majority Voting) " + order + ":",
+                times,
+                iter_info
+            )
+
+        # EX 2
+
+        # pred = []
+        # times = []
+        # trial = 50
+        # for i in range(trial):
+        #     print(f"LP on {dataset_name}: Experiment {i+1} of {trial} Started...")
+        #     start_time = time.time()
+        #     labels = torch.arange(num_nodes)
+        #     pred_lp, _ = label_propagation(data.edge_index, labels)
+        #     pred.append(pred_lp)
+        #     save_result(data, pred_lp, dataset_name + '_lp')
+        #     elapsed_time = time.time() - start_time
+        #     times.append(elapsed_time)
+        #     print(f"LP on {dataset_name}: Experiment {i+1} of {trial} Ended in {elapsed_time:.5f} seconds")
         
-        evaluate_and_save_results(
-            data, 
-            pred,
-            dataset_name + "_lp_result.txt",  
-            "Label Propagation (Majority Voting):",
-            times
-        )
+        # evaluate_and_save_results(
+        #     data, 
+        #     pred,
+        #     dataset_name + "_lp_result.txt",  
+        #     "Label Propagation (Majority Voting):",
+        #     times
+        # )

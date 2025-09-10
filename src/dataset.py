@@ -465,13 +465,128 @@ def load_yelp(sample_size=None):
     
     return data, 1
 
+def load_custom(sample_size=None):
+    """
+    custom 데이터셋을 로딩하는 함수
+    
+    Args:
+        sample_size: 샘플링할 노드 개수 (None이면 전체 사용)
+    
+    Returns:
+        data: PyTorch Geometric data 객체
+        num_classes: 클래스 개수 (기본값 1)
+    """
+    # 기본 디렉토리 경로 설정
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # custom_edges.txt 로딩
+    edge_path = os.path.join(base_dir, '..', 'data', 'custom', 'custom_edges.txt')
+    with open(edge_path, 'r') as f:
+        edges = [tuple(map(int, line.strip().split())) for line in f]
+    edges = np.array(edges).T
+    
+    # custom_totalCheckins.txt 로딩 및 체크인 정보 추출
+    checkin_path = os.path.join(base_dir, '..', 'data', 'custom', 'custom_totalCheckins.txt')
+    checkin_data = []
+    with open(checkin_path, 'r') as f:
+        for line in f:
+            if line.strip():  # 빈 줄 무시
+                parts = line.strip().split()
+                if len(parts) >= 3:  # 최소 user, x, y 좌표가 있어야 함
+                    user_id = int(parts[0])
+                    x_coord = float(parts[1])
+                    y_coord = float(parts[2])
+                    checkin_data.append({'user': user_id, 'lat': y_coord, 'lon': x_coord})
+    
+    # DataFrame으로 변환
+    df = pd.DataFrame(checkin_data)
+    
+    # 비정상적인 위치 데이터 제외는 건너뛰기 (custom 데이터는 작은 좌표계 사용)
+    
+    # 체크인 정보가 있는 노드만 선택
+    valid_nodes = set(df['user'].astype(int))
+    
+    # 샘플링 적용
+    if sample_size is not None and sample_size < len(valid_nodes):
+        # 재현성을 위한 랜덤 시드 설정
+        np.random.seed(42)
+        # 무작위로 sample_size만큼의 노드 선택
+        valid_nodes = set(np.random.choice(list(valid_nodes), size=sample_size, replace=False))
+    
+    # 엣지 필터링 - 양쪽 노드 모두 valid한 경우만 유지
+    valid_edges = [(u, v) for u, v in zip(edges[0], edges[1]) 
+                   if u in valid_nodes and v in valid_nodes]
+    if not valid_edges:
+        raise ValueError("No valid edges found after filtering")
+    
+    # 노드 ID 리매핑
+    node_map = {old: new for new, old in enumerate(sorted(valid_nodes))}
+    
+    # 양방향 엣지 생성 (u->v와 v->u 모두 추가)
+    bidirectional_edges = []
+    for u, v in valid_edges:
+        bidirectional_edges.append([node_map[u], node_map[v]])
+        bidirectional_edges.append([node_map[v], node_map[u]])  # 역방향 엣지 추가
+    edges_remapped = np.array(bidirectional_edges).T
+    num_nodes = len(node_map)
+    
+    # feature matrix 생성
+    features = np.zeros((num_nodes, 2), dtype=np.float32)
+    rad_features = np.zeros((num_nodes, 2), dtype=np.float32)
+    longitude = np.zeros(num_nodes, dtype=np.float32)
+    latitude = np.zeros(num_nodes, dtype=np.float32)
+    
+    for _, row in df.iterrows():
+        old_id = int(row['user'])
+        if old_id in node_map:
+            new_id = node_map[old_id]
+            features[new_id] = [row['lat'], row['lon']]
+            rad_features[new_id] = [np.radians(row['lat']), np.radians(row['lon'])]
+            longitude[new_id] = row['lon']
+            latitude[new_id] = row['lat']
+
+    # WCC와 SCC 정보 계산
+    _, wcc_info = find_connected_components(edges_remapped, num_nodes, directed=False)
+    _, scc_info = find_strongly_connected_components(edges_remapped, num_nodes)
+    
+    # Data 객체 생성
+    data = type('Data', (), {})()
+    data.edge_index = torch.tensor(edges_remapped, dtype=torch.long)
+    data.num_nodes = num_nodes
+    data.y = torch.zeros(num_nodes, dtype=torch.long)
+    data.x = torch.from_numpy(features)
+    data.rad_x = torch.from_numpy(rad_features)
+    data.longitude = torch.from_numpy(longitude)
+    data.latitude = torch.from_numpy(latitude)
+
+    # 노드 ID 매핑 정보도 저장
+    data.node_map = node_map
+    
+    # WCC와 SCC 정보 추가
+    data.largest_wcc_nodes = wcc_info['nodes']
+    data.largest_wcc_edges = wcc_info['edges']
+    data.largest_wcc_nodes_fraction = wcc_info['fraction_nodes']
+    data.largest_wcc_edges_fraction = wcc_info['fraction_edges']
+    
+    data.largest_scc_nodes = scc_info['nodes']
+    data.largest_scc_edges = scc_info['edges']
+    data.largest_scc_nodes_fraction = scc_info['fraction_nodes']
+    data.largest_scc_edges_fraction = scc_info['fraction_edges']
+    
+    # 평균 차수 추가
+    data.avg_degree = 2 * edges_remapped.shape[1] / num_nodes if num_nodes > 0 else 0
+    
+    return data, 1
+
 def load_dataset(name='brightkite', sample_size=None):
     if name.lower() == 'brightkite':
         return load_brightkite(sample_size)
-    if name.lower() == 'gowalla':
+    elif name.lower() == 'gowalla':
         return load_gowalla(sample_size)
-    if name.lower() == 'yelp':
+    elif name.lower() == 'yelp':
         return load_yelp(sample_size)
+    elif name.lower() == 'custom':
+        return load_custom()
     else:
         from torch_geometric.datasets import Planetoid
         from torch_geometric.transforms import NormalizeFeatures

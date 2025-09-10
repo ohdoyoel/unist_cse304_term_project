@@ -1,5 +1,5 @@
 // 지도 초기화 (전 세계 지도)
-const map = L.map("map").setView([20, 0], 2);
+const map = L.map("map").setView([33.1743, 126.6842], 6);
 
 // ESRI World Imagery (위성 사진) 타일 레이어 추가
 L.tileLayer(
@@ -83,7 +83,7 @@ function redrawVisibleNodes() {
         color: color,
         fillColor: color,
         fillOpacity: 0.7,
-        radius: 2,
+        radius: 10,
         weight: 0,
       }).addTo(nodeLayerGroup);
     }
@@ -110,7 +110,7 @@ function getClusterColor(clusterId) {
     const id = parseInt(clusterId);
     const goldenRatio = 0.618033988749895;
     const hue = (id * goldenRatio) % 1;
-    const color = `hsl(${Math.floor(hue * 360)}, 70%, 60%)`;
+    const color = `hsl(${Math.floor(hue * 360)}, 80%, 70%)`;
     clusterColors.set(clusterId, color);
   }
   return clusterColors.get(clusterId);
@@ -367,8 +367,8 @@ async function loadData() {
         L.circleMarker([lat, lng], {
           color: color,
           fillColor: color,
-          fillOpacity: 0.7,
-          radius: 2,
+          fillOpacity: 0.5,
+          radius: 10,
           weight: 0,
         }).addTo(nodeLayerGroup);
       }
@@ -523,59 +523,6 @@ function toggleUIVisibility() {
 
   // 지도 상호작용 토글
   toggleMapInteraction();
-
-  // 노드와 엣지 다시 그리기 (1개 노드 클러스터 및 클러스터 간 엣지 필터링 적용)
-  if (currentNodeIndex.size > 0) {
-    // 기존 레이어만 클리어하고 데이터는 유지
-    nodeLayerGroup.clearLayers();
-    edgeLayerGroup.clearLayers();
-
-    // 현재 데이터로 다시 로드
-    const nodes = Array.from(currentNodeIndex.values());
-    const clusterCounts = !isUIVisible
-      ? getVisibleClusterNodeCounts()
-      : getClusterNodeCounts();
-    const connectedNodes = !isUIVisible ? getConnectedNodesInBounds() : null;
-
-    // 노드 다시 그리기
-    nodes.forEach((node) => {
-      const lat = parseFloat(node.latitude);
-      const lng = parseFloat(node.longitude);
-      const clusterId = node.cluster_label;
-
-      if (!isNaN(lat) && !isNaN(lng)) {
-        // UI 숨김 모드에서 필터링 조건들
-        if (!isUIVisible) {
-          // 1개 노드 클러스터는 제외
-          if (clusterCounts.get(clusterId) <= 1) {
-            console.log(
-              `노드 ${node.node_id} 제외: 클러스터 크기 ${clusterCounts.get(
-                clusterId
-              )}`
-            );
-            return;
-          }
-          // 엣지로 연결되지 않은 노드는 제외
-          if (!connectedNodes.has(node.node_id)) {
-            console.log(`노드 ${node.node_id} 제외: 연결된 엣지 없음`);
-            return;
-          }
-        }
-
-        const color = getClusterColor(clusterId);
-        L.circleMarker([lat, lng], {
-          color: color,
-          fillColor: color,
-          fillOpacity: 0.7,
-          radius: 2,
-          weight: 0,
-        }).addTo(nodeLayerGroup);
-      }
-    });
-
-    // 엣지 다시 그리기
-    visualizeEdges();
-  }
 }
 
 // ESC 키 이벤트 리스너

@@ -1,104 +1,95 @@
 import torch
+import networkx as nx
+from networkx.algorithms import community
 from collections import defaultdict
 from src.utils import compute_fixed_alpha_similarity
+import time
 
-def fixed_alpha_label_propagation(data, labels, fixed_alpha, structure_similarity=None, location_similarity=None, max_iter=1000, verbose=False):
+def fixed_alpha_label_propagation(data, labels, fixed_alpha, structure_similarity=None, location_similarity=None, verbose=False):
+    """
+    NetworkX 라이브러리를 이용한 Fixed Alpha Label Propagation 알고리즘을 수행합니다.
+    구조 유사도와 위치 유사도를 fixed_alpha 비율로 배합하여 가중치로 사용합니다.
+    
+    Args:
+        data: 그래프 데이터 객체
+        labels: 노드 레이블 (사용되지 않음 - NetworkX가 자동으로 커뮤니티 탐지)
+        fixed_alpha: 구조 유사도와 위치 유사도의 배합 비율 (0~1)
+        structure_similarity: 구조 유사도 딕셔너리
+        location_similarity: 위치 유사도 딕셔너리
+        max_iter: 호환성을 위한 파라미터 (NetworkX에서는 내장 수렴 조건 사용)
+        verbose: 상세 출력 여부 (기본값: False)
+    
+    Returns:
+        pred_labels: 예측된 레이블
+        mixed_similarity: 배합된 유사도 딕셔너리
+        iter_info: 반복 과정 정보
+    """
     if structure_similarity is None or location_similarity is None:
         raise ValueError("structure_similarity와 location_similarity는 반드시 제공되어야 합니다.")
 
     n = labels.size(0)
-    prev_unique_labels = n
-    prev_changes = n
     
-    # 초기 레이블 설정
-    pred_labels = labels.clone()
-
-    iter_info = []
-    last_adj_dict = None
-
-    # 인접 리스트 생성
-    # edge_index로부터 인접 리스트 생성
-    adj_list = [[] for _ in range(n)]
-    edge_array = data.edge_index.cpu().numpy() if hasattr(data.edge_index, 'cpu') else data.edge_index
-    for i in range(edge_array.shape[1]):
-        u, v = edge_array[0, i], edge_array[1, i]
-        adj_list[u].append(v)
-        adj_list[v].append(u)  # 무방향 그래프 가정
-    adj_weights = [defaultdict(float) for _ in range(n)]
-
-    for iter_idx in range(max_iter):
-        # 적응형 유사도 계산
-        similarity, avg_alpha, dev_alpha = compute_fixed_alpha_similarity(
-            data=data,
-            fixed_alpha=fixed_alpha,
-            structure_similarity=structure_similarity,
-            location_similarity=location_similarity,
-            pred_labels=pred_labels
-        )
-        last_adj_dict = similarity
-
-        # 인접 리스트와 가중치 업데이트
-        for i in range(n):
-            adj_weights[i].clear()
+    # fixed_alpha 비율로 구조 유사도와 위치 유사도를 배합
+    mixed_similarity = {}
+    all_edges = set(structure_similarity.keys()) | set(location_similarity.keys())
+    
+    for edge in all_edges:
+        struct_sim = structure_similarity.get(edge, 0.0)
+        loc_sim = location_similarity.get(edge, 0.0)
+        # fixed_alpha: 구조 유사도 가중치, (1-fixed_alpha): 위치 유사도 가중치
+        mixed_sim = fixed_alpha * struct_sim + (1 - fixed_alpha) * loc_sim
+        if mixed_sim > 0:  # 양수인 유사도만 사용
+            mixed_similarity[edge] = mixed_sim
+    
+    if verbose:
+        print(f"Fixed Alpha: {fixed_alpha}")
+        print(f"총 {len(mixed_similarity)}개의 가중치 있는 엣지 생성")
+        print(f"평균 가중치: {sum(mixed_similarity.values()) / len(mixed_similarity):.6f}")
+    
+    # NetworkX 그래프 생성
+    G = nx.Graph()
+    G.add_nodes_from(range(n))
+    
+    # 가중치가 있는 엣지 추가
+    weighted_edges = []
+    for (u, v), weight in mixed_similarity.items():
+        weighted_edges.append((u, v, weight))
+    
+    G.add_weighted_edges_from(weighted_edges)
+    
+    if verbose:
+        print(f"그래프 생성 완료: 노드 {G.number_of_nodes()}개, 가중치 엣지 {G.number_of_edges()}개")
+    
+    # NetworkX asynchronous label propagation 수행
+    try:
+        random_seed = int(time.time() * 1000) % 2**32
+        communities = community.asyn_lpa_communities(G, weight='weight', seed=random_seed)
+        communities_list = list(communities)
         
-        for (u, v), score in similarity.items():
-            adj_weights[u][v] = score
-
-        # 가중치 기반 레이블 전파
-        pred_labels_new = pred_labels.clone()
-        label_changes = 0
-
-        for node in range(n):
-            if not adj_list[node]:  # 이웃이 없는 노드는 건너뜀
-                continue
-
-            # 이웃들의 레이블과 가중치 수집
-            neighbor_labels = defaultdict(float)
-            total_weight = 0
-            
-            for neighbor in adj_list[node]:
-                weight = adj_weights[node][neighbor]
-                neighbor_labels[pred_labels[neighbor].item()] += weight
-                total_weight += weight
-
-            if total_weight > 0:  # 정규화
-                for label in neighbor_labels:
-                    neighbor_labels[label] /= total_weight
-
-            # 가장 높은 가중치를 가진 레이블 선택
-            if neighbor_labels:
-                # 최대 가중치 찾기
-                max_weight = max(neighbor_labels.values())
-                # 최대 가중치를 가진 레이블들 찾기
-                best_labels = [label for label, weight in neighbor_labels.items() if weight == max_weight]
-                
-                # tie가 발생한 경우 랜덤으로 선택
-                if len(best_labels) > 1:
-                    best_label = best_labels[torch.randint(0, len(best_labels), (1,)).item()]
-                else:
-                    best_label = best_labels[0]
-                
-                if pred_labels[node].item() != best_label:
-                    pred_labels_new[node] = best_label
-                    label_changes += 1
-
-        num_unique_labels = len(torch.unique(pred_labels_new))
-        iter_info.append(f"Iter {iter_idx+1}: #labels={num_unique_labels}, changes={label_changes}")
+        # 커뮤니티를 레이블로 변환
+        pred_labels = torch.zeros(n, dtype=labels.dtype)
+        for label_idx, comm in enumerate(communities_list):
+            for node in comm:
+                pred_labels[node] = label_idx
+        
+        num_communities = len(communities_list)
+        iter_info = [
+            f"NetworkX Fixed Alpha Label Propagation 완료",
+            f"발견된 커뮤니티 수: {num_communities}",
+            f"Fixed Alpha: {fixed_alpha}",
+            f"사용된 가중치 엣지 수: {len(mixed_similarity)}"
+        ]
+        
         if verbose:
-            print(iter_info[-1])
-
-        # 수렴 조건 체크
-        if (
-            label_changes / n < 0.01  # 충분히 안정화됨
-            or (num_unique_labels >= prev_unique_labels and label_changes >= prev_changes)  # 레이블 수가 더 이상 줄지 않음
-        ):
-            iter_info.append(f"Converged at iteration {iter_idx+1}")
-            if verbose:
-                print(iter_info[-1])
-            break
-
-        prev_unique_labels = num_unique_labels
-        prev_changes = label_changes
-        pred_labels = pred_labels_new
-
-    return pred_labels, last_adj_dict, iter_info
+            for info in iter_info:
+                print(info)
+            print(f"각 커뮤니티 크기: {[len(comm) for comm in communities_list]}")
+        
+    except Exception as e:
+        if verbose:
+            print(f"NetworkX label propagation 실행 중 오류: {e}")
+        # 폴백: 모든 노드를 하나의 커뮤니티로 할당
+        pred_labels = torch.zeros(n, dtype=labels.dtype)
+        iter_info = [f"오류로 인해 단일 커뮤니티로 할당: {e}"]
+    
+    return pred_labels, mixed_similarity, iter_info

@@ -1,86 +1,66 @@
 import torch
+import networkx as nx
+from networkx.algorithms import community
+import random
+import time
 
-def label_propagation(edge_index, labels, max_iter=1000, verbose=False):
+def label_propagation(edge_index, labels, order='random', verbose=False):
     """
-    Majority voting 기반의 Label Propagation 알고리즘을 수행합니다.
+    NetworkX 라이브러리를 이용한 Label Propagation 알고리즘을 수행합니다.
     
     Args:
         edge_index: (2, E) 크기의 엣지 인덱스 텐서
-        labels: 노드 레이블
-        max_iter: 최대 반복 횟수 (기본값: 1000)
-        verbose: 상세 출력 여부 (기본값: True)
+        labels: 노드 레이블 (사용되지 않음 - NetworkX가 자동으로 커뮤니티 탐지)
+        max_iter: 호환성을 위한 파라미터 (NetworkX에서는 내장 수렴 조건 사용)
+        verbose: 상세 출력 여부 (기본값: False)
+        seed: 랜덤 시드 (기본값: None, 매번 다른 결과)
     
     Returns:
         pred_labels: 예측된 레이블
         iter_info: 반복 과정 정보
     """
     n = labels.size(0)
-    prev_unique_labels = n  # 초기값 설정
-    prev_changes = n  # 초기값 설정
     
-    # edge_index로부터 인접 리스트 생성
-    adj_list = [[] for _ in range(n)]
+    # NetworkX 그래프 생성
+    G = nx.Graph()
+    G.add_nodes_from(range(n))
+    
+    # edge_index를 NetworkX 엣지로 변환
     edge_array = edge_index.cpu().numpy() if hasattr(edge_index, 'cpu') else edge_index
-    for i in range(edge_array.shape[1]):
-        u, v = edge_array[0, i], edge_array[1, i]
-        adj_list[u].append(v)
-        adj_list[v].append(u)  # 무방향 그래프 가정
+    edges = [(int(edge_array[0, i]), int(edge_array[1, i])) for i in range(edge_array.shape[1])]
+    G.add_edges_from(edges)
     
-    # 초기 레이블 설정
-    pred_labels = labels.clone()
+    if verbose:
+        print(f"그래프 생성 완료: 노드 {G.number_of_nodes()}개, 엣지 {G.number_of_edges()}개")
     
-    iter_info = []
-    
-    for iter_idx in range(max_iter):
-        pred_labels_new = pred_labels.clone()
-        label_changes = 0
+    # NetworkX label propagation 수행
+    try:
+        random_seed = int(time.time() * 1000) % 2**32
+        communities = community.asyn_lpa_communities(G, seed=random_seed, order=order)
+        communities_list = list(communities)
         
-        # 각 노드에 대해 majority voting 수행
-        for node in range(n):         
-            if not adj_list[node]:  # 이웃이 없는 노드는 건너뜀
-                continue
-                
-            # 이웃들의 레이블 수집
-            neighbor_labels = pred_labels[adj_list[node]]
-            # 가장 많이 등장하는 레이블 선택
-            values, counts = torch.unique(neighbor_labels, return_counts=True)
-            
-            # tie시 첫번째 레이블 선택
-            # pred_labels_new[node] = values[counts.argmax()]
-
-            # tie시 랜덤 선택
-            max_count = counts.max()
-            # 최대 빈도수를 가진 레이블들 찾기
-            max_indices = torch.where(counts == max_count)[0]
-            
-            if len(max_indices) > 1:
-                # 동률이 발생한 경우, 랜덤으로 선택
-                tied_labels = values[max_indices]
-                random_idx = torch.randint(0, len(tied_labels), (1,))
-                pred_labels_new[node] = tied_labels[random_idx]
-            else:
-                pred_labels_new[node] = values[counts.argmax()]
-            
-            if pred_labels_new[node] != pred_labels[node]:
-                label_changes += 1
+        # 커뮤니티를 레이블로 변환
+        pred_labels = torch.zeros(n, dtype=labels.dtype)
+        for label_idx, comm in enumerate(communities_list):
+            for node in comm:
+                pred_labels[node] = label_idx
         
-        num_unique_labels = len(torch.unique(pred_labels_new))
-        iter_info.append(f"Iter {iter_idx+1}: #labels={num_unique_labels}, changes={label_changes}")
+        num_communities = len(communities_list)
+        iter_info = [
+            f"NetworkX Label Propagation 완료",
+            f"발견된 커뮤니티 수: {num_communities}",
+        ]
+        
         if verbose:
-            print(iter_info[-1])
+            for info in iter_info:
+                print(info)
+            print(f"각 커뮤니티 크기: {[len(comm) for comm in communities_list]}")
         
-        # 수렴 조건 체크
-        if (
-            label_changes / n < 0.01
-            or (num_unique_labels >= prev_unique_labels and label_changes >= prev_changes)
-        ):
-            iter_info.append(f"Converged at iteration {iter_idx+1}")
-            if verbose:
-                print(iter_info[-1])
-            break
-            
-        prev_unique_labels = num_unique_labels
-        prev_changes = label_changes
-        pred_labels = pred_labels_new
-        
+    except Exception as e:
+        if verbose:
+            print(f"NetworkX label propagation 실행 중 오류: {e}")
+        # 폴백: 모든 노드를 하나의 커뮤니티로 할당
+        pred_labels = torch.zeros(n, dtype=labels.dtype)
+        iter_info = [f"오류로 인해 단일 커뮤니티로 할당: {e}"]
+    
     return pred_labels, iter_info

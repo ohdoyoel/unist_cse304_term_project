@@ -18,90 +18,36 @@ def _to_numpy(tensor):
 
 def _build_graph(edge_index):
     # Helper to build nx.Graph from edge_index torch tensor
-    import torch
     G = nx.Graph()
     edges = _to_numpy(edge_index).T
     G.add_edges_from(edges)
     return G
 
-def sn_modularity(data, pred_labels, sigma=1.0):
+def sn_modularity(edge_index, pred_labels, rad_x, weight="weight", sigma=1.0):
     """
     Spatially-near (SN) modularity를 계산하는 함수
     
+    NetworkX의 modularity 함수와 동일한 인터페이스를 사용하여
+    공간적 거리를 고려한 modularity를 계산합니다.
+    
     Args:
-        data: PyG Data 객체 (edge_index, edge_weight, rad_x 속성 필요)
-        pred_labels: 예측된 커뮤니티 레이블
+        edge_index: torch.Tensor or numpy.ndarray
+        엣지 리스트 [2, E]
+        pred_labels: torch.Tensor or numpy.ndarray
+        노드 레이블
+        rad_x: torch.Tensor or numpy.ndarray
+        노드 위치 (라디안 단위)
+        weight: 엣지 가중치 속성명 (기본값: "weight")
         sigma: 거리 스케일링 파라미터 (기본값: 1.0)
     
     Returns:
         float: SN-modularity 값
     """
-    import torch
-    
-    # 엣지 정보 추출
-    edge_index = data.edge_index
-    edge_weight = data.edge_weight if hasattr(data, 'edge_weight') else torch.ones(edge_index.size(1))
-    pos = data.rad_x  # 노드의 위치 정보 (latitude, longitude in radians)
-    
-    # 전체 엣지 가중치의 합 (2m)
-    total_weight = edge_weight.sum()
-    
-    # 각 노드의 degree (ki) 계산
-    degrees = torch.zeros(pred_labels.size(0))
-    for i in range(edge_index.size(1)):
-        degrees[edge_index[0, i]] += edge_weight[i]
-        degrees[edge_index[1, i]] += edge_weight[i]
-    
-    # 유니크한 커뮤니티 레이블 추출
-    communities = torch.unique(pred_labels)
-    
-    modularity = 0.0
-    for c in communities:
-        # 현재 커뮤니티에 속한 노드들의 인덱스
-        c_mask = (pred_labels == c)
-        c_nodes = torch.where(c_mask)[0]
-        
-        if len(c_nodes) == 0:
-            continue
-        
-        # 커뮤니티 내부 엣지의 가중치 합 계산 (벡터화)
-        edge_mask = c_mask[edge_index[0]] & c_mask[edge_index[1]]
-        internal_edges = edge_weight[edge_mask].sum()
-        
-        # 커뮤니티 내 노드들의 degree 합의 제곱으로 degree_product_sum 계산
-        community_degree_sum = degrees[c_nodes].sum()
-        degree_product_sum = community_degree_sum * community_degree_sum
-        
-        # 커뮤니티 중심 계산
-        center = pos[c_nodes].mean(dim=0)
-        
-        # 거리 기반 정규화 항 계산 (Haversine, 벡터화)
-        dlat = center[0] - pos[c_nodes, 0]
-        dlon = center[1] - pos[c_nodes, 1]
-        
-        # Haversine 공식 (수치 안정성을 위해 torch.clamp 사용)
-        a = torch.sin(dlat/2)**2 + torch.cos(pos[c_nodes, 0]) * torch.cos(center[0]) * torch.sin(dlon/2)**2
-        a = torch.clamp(a, 0, 1)  # 수치 안정성을 위해 0과 1 사이로 제한
-        distances = 2 * torch.asin(torch.sqrt(a))  # 라디안 단위의 거리
-        
-        # 거리에 따른 가중치 계산 (거리가 0일 때 1이 되도록)
-        distance_term = 1 + ((distances / sigma) ** 2).max() # or max()
-        distance_term = torch.clamp(distance_term, min=1e-10)  # 0으로 나누기 방지
-        
-        # 현재 커뮤니티의 modularity 계산
-        contribution = (internal_edges - degree_product_sum / (2 * total_weight)) / distance_term
-        modularity += contribution
-    
-    # 전체 modularity 정규화
-    modularity /= (2 * total_weight)
-    
-    return float(modularity)
-
-def modularity(edge_index, pred_labels):
     import networkx as nx
+    import numpy as np
     
-    # edge_index로 그래프 생성
-    edges = edge_index.cpu().numpy().T
+    # edge_index로 그래프 생성  
+    edges = _to_numpy(edge_index).T
     G = nx.Graph()
     
     # 실제 존재하는 노드만으로 그래프 생성
@@ -114,6 +60,138 @@ def modularity(edge_index, pred_labels):
     
     # 예측된 레이블로 커뮤니티 생성 (리매핑된 노드 번호 사용)
     communities = []
+    labels_np = _to_numpy(pred_labels)
+    unique_labels = np.unique(labels_np)
+    
+    for label in unique_labels:
+        nodes = np.where(labels_np == label)[0]
+        # 노드 번호 리매핑
+        remapped_nodes = [node_to_idx[n] for n in nodes if n in node_to_idx]
+        if remapped_nodes:  # 빈 커뮤니티 제외
+            communities.append(remapped_nodes)
+    
+    if not isinstance(communities, list):
+        communities = list(communities)
+    
+    # 위치 정보 추출 (rad_x를 numpy 배열로 변환하고 원래 노드 번호에서 리매핑된 노드 번호로 매핑)
+    rad_x_np = _to_numpy(rad_x)
+    positions = {}
+    for orig_node, remapped_node in node_to_idx.items():
+        if orig_node < len(rad_x_np):
+            positions[remapped_node] = tuple(rad_x_np[orig_node])
+    
+    # 전체 가중치 합 계산
+    directed = G.is_directed()
+    if directed:
+        out_degree = dict(G.out_degree(weight=weight))
+        in_degree = dict(G.in_degree(weight=weight))
+        m = sum(out_degree.values())
+        norm = 1 / m**2
+    else:
+        out_degree = in_degree = dict(G.degree(weight=weight))
+        deg_sum = sum(out_degree.values())
+        m = deg_sum / 2
+        norm = 1 / deg_sum**2
+    
+    def haversine_distance(pos1, pos2):
+        """두 위치 간의 Haversine 거리 계산 (라디안 단위 입력)"""
+        lat1, lon1 = pos1
+        lat2, lon2 = pos2
+        
+        dlat = lat1 - lat2
+        dlon = lon1 - lon2
+        
+        a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
+        a = np.clip(a, 0, 1)  # 수치 안정성
+        distance = 2 * np.arcsin(np.sqrt(a))
+        
+        return distance
+    
+    def community_contribution(community):
+        """각 커뮤니티의 SN-modularity 기여도 계산"""
+        comm = set(community)
+        
+        if len(comm) == 0:
+            return 0.0
+        
+        # 분자 계산: Σ_{i,j∈c} [w_ij - k_i k_j/(2m)]
+        numerator = 0.0
+        
+        # 커뮤니티 내의 모든 엣지에 대해 계산
+        for u, v, wt in G.edges(comm, data=weight, default=1):
+            if v in comm:  # 커뮤니티 내부 엣지만
+                # 실제 엣지 가중치 - 기대 가중치
+                expected_weight = (out_degree[u] * out_degree[v]) / (2 * m)
+                numerator += wt - expected_weight
+        
+        # 커뮤니티 중심 계산을 위한 위치 정보 확인
+        comm_positions = [positions[node] for node in comm if node in positions]
+        if len(comm_positions) == 0:
+            # 위치 정보가 없으면 기본 modularity 반환 (distance_term = 1)
+            return numerator
+        
+        # 커뮤니티 중심 계산 (x_c: 평균 위치)
+        center_lat = np.mean([pos[0] for pos in comm_positions])
+        center_lon = np.mean([pos[1] for pos in comm_positions])
+        center = (center_lat, center_lon)
+        
+        # 분모 계산: 1 + agg_{i∈c}(d(i,x_c)/σ)²
+        # 여기서 agg는 sum으로 구현 (논문에 따라 다를 수 있음)
+        distance_agg = 0.0
+        for node in comm:
+            if node in positions:
+                distance = haversine_distance(center, positions[node])
+                distance_agg += (distance / sigma) ** 2
+        
+        denominator = 1 + distance_agg
+        denominator = max(denominator, 1e-10)  # 0으로 나누기 방지
+        
+        # 커뮤니티별 기여도: [분자] / [분모]
+        return numerator / denominator
+    
+    # 전체 SN-modularity: (1/2m) × Σ_{c∈C} [각 커뮤니티 기여도]
+    total_contribution = sum(map(community_contribution, communities))
+    return total_contribution / (2 * m)
+
+def modularity(edge_index, pred_labels, edge_weight=None, weight="weight"):    
+    """
+    모듈러리티를 계산하는 함수 (가중치 지원)
+    
+    Args:
+        edge_index: torch.Tensor, 엣지 인덱스 [2, E]
+        pred_labels: torch.Tensor, 예측된 노드 레이블
+        edge_weight: torch.Tensor or None, 엣지 가중치 [E] (기본값: None, 모든 엣지 가중치 1)
+        weight: str, 가중치 속성명 (기본값: "weight")
+    
+    Returns:
+        float: 모듈러리티 값
+    """
+    # edge_index로 그래프 생성
+    edges = edge_index.cpu().numpy().T
+    G = nx.Graph()
+    
+    # 실제 존재하는 노드만으로 그래프 생성
+    unique_nodes = set(edges.flatten())
+    node_to_idx = {node: idx for idx, node in enumerate(sorted(unique_nodes))}
+    
+    # 엣지 리매핑 및 가중치 정보 추가
+    remapped_edges = []
+    if edge_weight is not None:
+        edge_weights = edge_weight.cpu().numpy()
+        for i, (u, v) in enumerate(edges):
+            remapped_u, remapped_v = node_to_idx[u], node_to_idx[v]
+            # 가중치가 있는 엣지 추가
+            remapped_edges.append((remapped_u, remapped_v, {weight: edge_weights[i]}))
+    else:
+        for u, v in edges:
+            remapped_u, remapped_v = node_to_idx[u], node_to_idx[v]
+            # 기본 가중치 1로 엣지 추가
+            remapped_edges.append((remapped_u, remapped_v, {weight: 1.0}))
+    
+    G.add_edges_from(remapped_edges)
+    
+    # 예측된 레이블로 커뮤니티 생성 (리매핑된 노드 번호 사용)
+    communities = []
     for label in torch.unique(pred_labels):
         nodes = (pred_labels == label).nonzero().flatten().cpu().numpy()
         # 노드 번호 리매핑
@@ -121,21 +199,57 @@ def modularity(edge_index, pred_labels):
         if remapped_nodes:  # 빈 커뮤니티 제외
             communities.append(remapped_nodes)
     
-    return nx.community.modularity(G, communities)
+    # 가중치를 고려한 모듈러리티 계산
+    return nx.community.modularity(G, communities, weight=weight)
 
-def conductance(edge_index, labels):
-    G = _build_graph(edge_index)
+def conductance(edge_index, labels, edge_weight=None, weight=None):
+    """
+    컨덕턴스를 계산하는 함수 (가중치 지원)
+    
+    Args:
+        edge_index: torch.Tensor, 엣지 인덱스 [2, E]
+        labels: torch.Tensor, 노드 레이블
+        edge_weight: torch.Tensor or None, 엣지 가중치 [E] (기본값: None)
+        weight: str, 가중치 속성명 (기본값: None, 가중치 없음)
+    
+    Returns:
+        float: 각 클러스터의 컨덕턴스 평균값
+    """
+    # 가중치가 있는 그래프 생성
+    if edge_weight is not None:
+        edges = _to_numpy(edge_index).T
+        edge_weights = _to_numpy(edge_weight)
+        G = nx.Graph()
+        
+        # 가중치와 함께 엣지 추가
+        if weight is None:
+            weight = 'weight'  # 기본 가중치 속성명
+        
+        for i, (u, v) in enumerate(edges):
+            G.add_edge(u, v, **{weight: edge_weights[i]})
+    else:
+        G = _build_graph(edge_index)
+    
     labels_np = _to_numpy(labels)
     unique_labels = np.unique(labels_np)
     conductances = []
+    
     for label in unique_labels:
         nodes = np.where(labels_np == label)[0]
+        # 빈 클러스터나 전체 그래프와 같은 크기의 클러스터는 건너뛰기
         if len(nodes) == 0 or len(nodes) == G.number_of_nodes():
             continue
-        cut_size = nx.cut_size(G, nodes)
-        volume = nx.volume(G, nodes)
-        if volume > 0:
-            conductances.append(cut_size / volume)
+        
+        # 나머지 노드들 (T 집합)
+        remaining_nodes = set(G.nodes()) - set(nodes)
+        
+        if len(remaining_nodes) == 0:
+            continue
+            
+        # NetworkX의 conductance 함수 사용
+        cond = nx.conductance(G, nodes, remaining_nodes, weight=weight)
+        conductances.append(cond)
+    
     return float(np.mean(conductances)) if conductances else 0.0
 
 def avg_clustering_coefficient(edge_index, labels, sample_size=10000):

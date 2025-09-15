@@ -1,9 +1,9 @@
 // 지도 초기화 (전 세계 지도)
-const map = L.map("map").setView([33.1743, 126.6842], 6);
+const map = L.map("map").setView([34.8, -84], 8);
 
 // ESRI World Imagery (위성 사진) 타일 레이어 추가
 L.tileLayer(
-  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}",
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
   {
     attribution:
       "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community",
@@ -33,6 +33,9 @@ let currentNodeIndex = new Map(); // 현재 로드된 노드 인덱스
 let isUIVisible = true; // UI 표시 상태 관리
 let overlayLayer = null; // 어두운 배경 레이어
 let mapInteractionDisabled = false; // 지도 상호작용 비활성화 상태
+let topClustersMode = false; // 상위 4개 클러스터만 표시하는 모드
+let topClusters = new Set(); // 상위 4개 클러스터 ID를 저장
+let topClustersArray = []; // 상위 4개 클러스터를 순서대로 저장하는 배열 (색상 매핑용)
 
 // 화면 내 노드만 다시 그리는 함수
 function redrawVisibleNodes() {
@@ -60,6 +63,11 @@ function redrawVisibleNodes() {
         return;
       }
 
+      // 상위 4개 클러스터 모드에서 필터링
+      if (topClustersMode && !topClusters.has(clusterId)) {
+        return;
+      }
+
       // UI 숨김 모드에서 필터링 조건들
       if (!isUIVisible) {
         // 1개 노드 클러스터는 제외
@@ -78,7 +86,9 @@ function redrawVisibleNodes() {
         }
       }
 
-      const color = getClusterColor(clusterId);
+      const color = topClustersMode
+        ? getTopClusterColor(clusterId, topClustersArray)
+        : getClusterColor(clusterId);
       L.circleMarker([lat, lng], {
         color: color,
         fillColor: color,
@@ -203,6 +213,34 @@ function getVisibleClusterNodeCounts() {
   return clusterCounts;
 }
 
+// 현재 화면 내에서 상위 4개 클러스터를 찾는 함수
+function getTopClustersInBounds() {
+  const clusterCounts = getVisibleClusterNodeCounts();
+
+  // 클러스터를 크기 순으로 정렬하여 상위 4개 선택
+  const sortedClusters = Array.from(clusterCounts.entries())
+    .sort((a, b) => b[1] - a[1]) // 내림차순 정렬 (크기가 큰 순서)
+    .slice(0, 4) // 상위 4개만 선택
+    .map((entry) => entry[0]); // 클러스터 ID만 추출
+
+  console.log("화면 내 상위 4개 클러스터:", sortedClusters);
+  console.log("클러스터별 노드 개수:", Object.fromEntries(clusterCounts));
+
+  // 전역 배열에 순서 저장
+  topClustersArray = sortedClusters;
+
+  return new Set(sortedClusters);
+}
+
+// 상위 4개 클러스터의 고정 색상을 반환하는 함수
+function getTopClusterColor(clusterId, topClustersArray) {
+  const fixedColors = ["#E74C3C", "#8ED973", "#F39C12", "#20A4F3"]; // 빨강, 노랑, 초록, 파랑
+  const index = topClustersArray.indexOf(clusterId);
+  return index !== -1 && index < 4
+    ? fixedColors[index]
+    : getClusterColor(clusterId);
+}
+
 // 현재 화면 내에서 엣지로 연결된 노드들을 찾는 함수
 function getConnectedNodesInBounds() {
   const connectedNodes = new Set();
@@ -268,6 +306,11 @@ function visualizeEdges() {
       if (sourceNode.cluster_label === targetNode.cluster_label) {
         const clusterId = sourceNode.cluster_label;
 
+        // 상위 4개 클러스터 모드에서 필터링
+        if (topClustersMode && !topClusters.has(clusterId)) {
+          return;
+        }
+
         // UI 숨김 모드에서 1개 노드 클러스터는 제외
         if (
           !isUIVisible &&
@@ -282,6 +325,9 @@ function visualizeEdges() {
         }
         edgesByCluster.get(clusterId).push(coords);
       } else {
+        // 상위 4개 클러스터 모드에서는 클러스터 간 엣지 제외
+        if (topClustersMode) return;
+
         // UI 숨김 모드에서는 클러스터 간 엣지 제외
         if (!isUIVisible) return;
 
@@ -292,20 +338,27 @@ function visualizeEdges() {
 
   // 클러스터 내부 엣지 그리기
   edgesByCluster.forEach((clusterEdges, clusterId) => {
+    // 상위 4개 클러스터 모드에서 필터링
+    if (topClustersMode && !topClusters.has(clusterId)) {
+      return;
+    }
+
     // UI 숨김 모드에서 1개 노드 클러스터는 제외
     if (!isUIVisible && clusterCounts && clusterCounts.get(clusterId) <= 1) {
       return;
     }
 
     L.polyline(clusterEdges, {
-      color: getClusterColor(clusterId),
+      color: topClustersMode
+        ? getTopClusterColor(clusterId, topClustersArray)
+        : getClusterColor(clusterId),
       weight: boundaryEdgesCheckbox.checked ? 2 : 0.5,
       opacity: 0.7,
     }).addTo(edgeLayerGroup);
   });
 
-  // 클러스터 간 엣지 그리기 (UI 표시 모드에서만)
-  if (isUIVisible && interClusterEdges.length > 0) {
+  // 클러스터 간 엣지 그리기 (UI 표시 모드에서만, 상위 4개 클러스터 모드가 아닐 때만)
+  if (isUIVisible && !topClustersMode && interClusterEdges.length > 0) {
     L.polyline(interClusterEdges, {
       color: "#ffffff",
       weight: 0.5,
@@ -345,6 +398,11 @@ async function loadData() {
       const clusterId = node.cluster_label;
 
       if (!isNaN(lat) && !isNaN(lng)) {
+        // 상위 4개 클러스터 모드에서 필터링
+        if (topClustersMode && !topClusters.has(clusterId)) {
+          return;
+        }
+
         // UI 숨김 모드에서 필터링 조건들
         if (!isUIVisible) {
           // 1개 노드 클러스터는 제외
@@ -363,7 +421,9 @@ async function loadData() {
           }
         }
 
-        const color = getClusterColor(clusterId);
+        const color = topClustersMode
+          ? getTopClusterColor(clusterId, topClustersArray)
+          : getClusterColor(clusterId);
         L.circleMarker([lat, lng], {
           color: color,
           fillColor: color,
@@ -435,7 +495,7 @@ function toggleOverlayLayer() {
         {
           color: "transparent",
           fillColor: "black",
-          fillOpacity: 0.5,
+          fillOpacity: 0,
           weight: 0,
           interactive: false, // 마우스 이벤트 무시
         }
@@ -506,23 +566,67 @@ function toggleMapInteraction() {
 
 // UI 투명도 토글 함수
 function toggleUIVisibility() {
-  isUIVisible = !isUIVisible;
-  const opacity = isUIVisible ? 0.8 : 0;
+  // 상위 4개 클러스터 모드 토글
+  topClustersMode = !topClustersMode;
 
-  // UI 컨트롤 요소들의 투명도 변경
-  const selectionControl = document.querySelector(".selection-control");
-  const edgeControl = document.querySelector(".edge-control");
-  const mapInfoControl = document.querySelector(".map-info-control");
+  if (topClustersMode) {
+    // 상위 4개 클러스터 찾기
+    topClusters = getTopClustersInBounds();
 
-  if (selectionControl) selectionControl.style.opacity = opacity;
-  if (edgeControl) edgeControl.style.opacity = opacity;
-  if (mapInfoControl) mapInfoControl.style.opacity = opacity;
+    // UI 숨기기
+    isUIVisible = false;
+    const opacity = 0;
 
-  // 어두운 배경 레이어 토글
-  toggleOverlayLayer();
+    // UI 컨트롤 요소들의 투명도 변경
+    const selectionControl = document.querySelector(".selection-control");
+    const edgeControl = document.querySelector(".edge-control");
+    const mapInfoControl = document.querySelector(".map-info-control");
 
-  // 지도 상호작용 토글
-  toggleMapInteraction();
+    if (selectionControl) selectionControl.style.opacity = opacity;
+    if (edgeControl) edgeControl.style.opacity = opacity;
+    if (mapInfoControl) mapInfoControl.style.opacity = opacity;
+
+    // 어두운 배경 레이어 토글
+    toggleOverlayLayer();
+
+    // 지도 상호작용 토글
+    toggleMapInteraction();
+
+    // 화면 다시 그리기
+    redrawVisibleNodes();
+    visualizeEdges();
+
+    console.log("상위 4개 클러스터 모드 활성화");
+  } else {
+    // 정상 모드로 복귀
+    isUIVisible = true;
+    const opacity = 0.8;
+
+    // UI 컨트롤 요소들의 투명도 변경
+    const selectionControl = document.querySelector(".selection-control");
+    const edgeControl = document.querySelector(".edge-control");
+    const mapInfoControl = document.querySelector(".map-info-control");
+
+    if (selectionControl) selectionControl.style.opacity = opacity;
+    if (edgeControl) edgeControl.style.opacity = opacity;
+    if (mapInfoControl) mapInfoControl.style.opacity = opacity;
+
+    // 어두운 배경 레이어 토글
+    toggleOverlayLayer();
+
+    // 지도 상호작용 토글
+    toggleMapInteraction();
+
+    // 상위 클러스터 정보 초기화
+    topClusters.clear();
+    topClustersArray = [];
+
+    // 화면 다시 그리기
+    redrawVisibleNodes();
+    visualizeEdges();
+
+    console.log("정상 모드로 복귀");
+  }
 }
 
 // ESC 키 이벤트 리스너

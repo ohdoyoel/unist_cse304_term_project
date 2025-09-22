@@ -5,41 +5,11 @@ import pandas as pd
 from src.dataset import load_dataset
 from src.model.alp import adaptive_label_propagation
 from src.model.flp import fixed_alpha_label_propagation
-from src.utils import compute_jaccard_similarity, compute_location_similarity, save_graph_result, evaluate_and_save_results
-
-def get_long_lat(data, num_nodes):
-    longitude = (
-        data.longitude.cpu().numpy() if hasattr(data, 'longitude') and hasattr(data.longitude, 'cpu')
-        else data.longitude if hasattr(data, 'longitude')
-        else np.full(num_nodes, np.nan)
-    )
-    latitude = (
-        data.latitude.cpu().numpy() if hasattr(data, 'latitude') and hasattr(data.latitude, 'cpu')
-        else data.latitude if hasattr(data, 'latitude')
-        else np.full(num_nodes, np.nan)
-    )
-    return longitude, latitude
-
-def save_result(data, pred_lp, file):
-    num_nodes = data.num_nodes
-    longitude, latitude = get_long_lat(data, num_nodes)
-    nodes_df = pd.DataFrame({
-        'node_id': np.arange(num_nodes),
-        'cluster_label': pred_lp.cpu().numpy(),
-        'longitude': longitude,
-        'latitude': latitude
-    })
-    edge_array = data.edge_index.cpu().numpy() if hasattr(data.edge_index, 'cpu') else data.edge_index
-    edges_df = pd.DataFrame({
-        'source': edge_array[0],
-        'target': edge_array[1]
-    }).drop_duplicates()
-    save_graph_result(nodes_df, edges_df, file)
+from src.utils import compute_jaccard_similarity, compute_location_similarity, evaluate_and_save_results, save_result
 
 if __name__ == '__main__':
-    dataset_names = ['yelp', 'brightkite', 'gowalla']
+    dataset_names = ['brightkite', 'gowalla']
     for dataset_name in dataset_names:
-        # dataset_name = 'brightkite'
         data, _ = load_dataset(dataset_name)
         num_nodes = data.num_nodes
         print(dataset_name, "valid nodes:", num_nodes, "valid edges:", data.edge_index.shape[1])
@@ -51,18 +21,20 @@ if __name__ == '__main__':
         pred = []
         times = []
         trial = 50
+        iters = []
         for i in range(trial):
             print(f"LLP on {dataset_name}: Experiment {i+1} of {trial} Started...")
             start_time = time.time()
             labels = torch.arange(num_nodes)
-            pred_lp, _, _ = fixed_alpha_label_propagation(
+            pred_lp, _, it = fixed_alpha_label_propagation(
                 data, labels,
                 fixed_alpha=0.0,
                 structure_similarity=structure_similarity,
                 location_similarity=location_similarity,
             )
             pred.append(pred_lp)
-            save_result(data, pred_lp, dataset_name + '_llp')
+            iters.append(it)
+            save_result(data, pred_lp, 'result/'+dataset_name+'/llp', dataset_name + '_llp_' + str(i))
             elapsed_time = time.time() - start_time
             times.append(elapsed_time)
             print(f"LLP on {dataset_name}: Experiment {i+1} of {trial} Ended in {elapsed_time:.5f} seconds")
@@ -71,5 +43,7 @@ if __name__ == '__main__':
             data, pred,
             dataset_name + "_llp_result.txt",
             "Label Propagation (Location Similarity):",
-            times
+            times,
+            iters,
+            result_dir='result/'+dataset_name+'/llp'
         )

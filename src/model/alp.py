@@ -319,8 +319,6 @@ def adaptive_label_propagation(data, labels, structure_similarity=None, location
             location_similarity=location_similarity,
             pred_labels=current_labels
         )
-        # print(adaptive_similarity)
-        # print(alpha)
         last_similarity = adaptive_similarity
         alpha_info.append(alpha)
         

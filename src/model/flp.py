@@ -1,7 +1,6 @@
 import torch
 import networkx as nx
-from networkx.algorithms import community
-from collections import defaultdict
+from src.model.label_propagation import custom_asyn_lpa_communities
 from src.utils import compute_fixed_alpha_similarity
 import time
 
@@ -63,7 +62,7 @@ def fixed_alpha_label_propagation(data, labels, fixed_alpha, structure_similarit
     # NetworkX asynchronous label propagation 수행
     try:
         random_seed = int(time.time() * 1000) % 2**32
-        communities = community.asyn_lpa_communities(G, weight='weight', seed=random_seed)
+        communities, it = custom_asyn_lpa_communities(G, weight='weight', seed=random_seed)
         communities_list = list(communities)
         
         # 커뮤니티를 레이블로 변환
@@ -92,4 +91,4 @@ def fixed_alpha_label_propagation(data, labels, fixed_alpha, structure_similarit
         pred_labels = torch.zeros(n, dtype=labels.dtype)
         iter_info = [f"오류로 인해 단일 커뮤니티로 할당: {e}"]
     
-    return pred_labels, mixed_similarity, iter_info
+    return pred_labels, mixed_similarity, it

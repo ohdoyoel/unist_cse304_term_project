@@ -1,10 +1,10 @@
 import torch
 import networkx as nx
-from networkx.algorithms import community
+from src.model.label_propagation import custom_asyn_lpa_communities
 import random
 import time
 
-def label_propagation(edge_index, labels, order='random', verbose=False):
+def label_propagation(edge_index, labels, verbose=False):
     """
     NetworkX 라이브러리를 이용한 Label Propagation 알고리즘을 수행합니다.
     
@@ -36,7 +36,7 @@ def label_propagation(edge_index, labels, order='random', verbose=False):
     # NetworkX label propagation 수행
     try:
         random_seed = int(time.time() * 1000) % 2**32
-        communities = community.asyn_lpa_communities(G, seed=random_seed, order=order)
+        communities, it = custom_asyn_lpa_communities(G, seed=random_seed)
         communities_list = list(communities)
         
         # 커뮤니티를 레이블로 변환
@@ -63,4 +63,4 @@ def label_propagation(edge_index, labels, order='random', verbose=False):
         pred_labels = torch.zeros(n, dtype=labels.dtype)
         iter_info = [f"오류로 인해 단일 커뮤니티로 할당: {e}"]
     
-    return pred_labels, iter_info
+    return pred_labels, it

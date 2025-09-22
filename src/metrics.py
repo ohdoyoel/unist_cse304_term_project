@@ -441,6 +441,160 @@ def intra_cluster_avg_distance(data, pred_labels, max_sample_size=10000):
     
     return avg_distance
 
+def inter_cluster_avg_distance(data, pred_labels, max_sample_size=1000, max_clusters=500):
+    """
+    각 클러스터 간의 평균 거리 계산 (최적화된 버전)
+    
+    Args:
+        data: 데이터 객체 (rad_x: 라디안 단위의 [위도, 경도] 좌표 포함)
+        pred_labels: 예측된 클러스터 레이블 배열
+        max_sample_size: 큰 클러스터에서 샘플링할 최대 노드 수 (기본값 감소)
+        max_clusters: 계산할 최대 클러스터 수 (기본값 크게 감소)
+        
+    Returns:
+        float: 클러스터 간 평균 거리 (km)
+    """
+    import numpy as np
+    from collections import Counter
+    
+    # 데이터 준비 (이미 라디안 단위)
+    rad_coords = data.rad_x.cpu().numpy() if hasattr(data.rad_x, 'cpu') else data.rad_x
+    pred_labels = pred_labels.cpu().numpy() if hasattr(pred_labels, 'cpu') else pred_labels
+    
+    # Counter를 사용해 클러스터 크기를 빠르게 계산
+    cluster_counts = Counter(pred_labels)
+    
+    # 클러스터가 2개 미만이면 계산 불가
+    if len(cluster_counts) < 2:
+        return 0.0
+    
+    # 크기가 1인 클러스터들을 제거 (노이즈 제거)
+    valid_clusters = {label: count for label, count in cluster_counts.items() if count > 1}
+    
+    if len(valid_clusters) < 2:
+        return 0.0
+    
+    # 상위 max_clusters개의 큰 클러스터만 선택
+    if len(valid_clusters) > max_clusters:
+        # 가장 큰 클러스터들만 선택
+        sorted_clusters = sorted(valid_clusters.items(), key=lambda x: x[1], reverse=True)
+        selected_clusters = dict(sorted_clusters[:max_clusters])
+    else:
+        selected_clusters = valid_clusters
+    
+    cluster_ids = list(selected_clusters.keys())
+    
+    # 벡터화된 방식으로 클러스터별 인덱스 생성
+    cluster_mask = np.isin(pred_labels, cluster_ids)
+    filtered_labels = pred_labels[cluster_mask]
+    filtered_coords = rad_coords[cluster_mask]
+    
+    # 각 클러스터의 중심점을 벡터화된 방식으로 계산
+    cluster_centers = {}
+    
+    for label in cluster_ids:
+        # 해당 클러스터의 좌표들 선택
+        mask = filtered_labels == label
+        cluster_coords = filtered_coords[mask]
+        
+        # 샘플링 (필요한 경우)
+        if len(cluster_coords) > max_sample_size:
+            # 랜덤 샘플링 대신 균등 샘플링 사용 (더 빠름)
+            indices = np.linspace(0, len(cluster_coords)-1, max_sample_size, dtype=int)
+            cluster_coords = cluster_coords[indices]
+        
+        # 중심점 계산 (벡터화된 평균)
+        cluster_centers[label] = np.mean(cluster_coords, axis=0)
+    
+    # 모든 중심점을 배열로 변환
+    centers_array = np.array(list(cluster_centers.values()))
+    
+    # 벡터화된 Haversine 거리 계산
+    def vectorized_haversine(centers):
+        """벡터화된 Haversine 거리 계산"""
+        n = len(centers)
+        if n < 2:
+            return np.array([])
+        
+        # 모든 쌍의 조합을 생성
+        idx1, idx2 = np.triu_indices(n, k=1)
+        
+        lat1, lon1 = centers[idx1, 0], centers[idx1, 1]
+        lat2, lon2 = centers[idx2, 0], centers[idx2, 1]
+        
+        # Haversine 공식 (벡터화됨)
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        
+        a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
+        c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+        distances = 6371 * c  # 지구 반지름 6371km
+        
+        return distances
+    
+    # 모든 클러스터 간 거리를 한 번에 계산
+    distances = vectorized_haversine(centers_array)
+    
+    if len(distances) == 0:
+        return 0.0
+    
+    # 평균 거리 반환
+    return np.mean(distances)
+
+def density_score(data, pred_labels):
+    """
+    클러스터별 밀도 스코어를 계산하는 함수 (최적화된 버전)
+    
+    Args:
+        data: Data 객체 (edge_index 필요)
+        pred_labels: 예측된 노드 레이블
+    
+    Returns:
+        float: 모든 클러스터의 평균 밀도 스코어
+    """
+    # 데이터 타입을 numpy로 변환
+    edge_index = _to_numpy(data.edge_index)
+    labels = _to_numpy(pred_labels)
+    
+    # 각 클러스터별 엣지 개수를 한 번에 계산
+    u_labels = labels[edge_index[0]]  # 출발 노드들의 라벨
+    v_labels = labels[edge_index[1]]  # 도착 노드들의 라벨
+    
+    # 같은 클러스터 내의 엣지들만 필터링
+    same_cluster_mask = (u_labels == v_labels)
+    intra_cluster_edges = edge_index[:, same_cluster_mask]
+    
+    # 각 클러스터별 엣지 개수 카운트
+    if intra_cluster_edges.shape[1] > 0:
+        edge_labels = labels[intra_cluster_edges[0]]  # 클러스터 내 엣지들의 라벨
+        unique_edge_labels, edge_counts = np.unique(edge_labels, return_counts=True)
+        cluster_edge_dict = dict(zip(unique_edge_labels, edge_counts))
+    else:
+        cluster_edge_dict = {}
+    
+    # 각 클러스터별 노드 개수 계산
+    unique_labels, node_counts = np.unique(labels, return_counts=True)
+    
+    # 각 클러스터의 밀도 계산
+    cluster_densities = []
+    for i, label in enumerate(unique_labels):
+        cluster_size = node_counts[i]
+        
+        if cluster_size <= 1:
+            # 노드가 1개 이하면 밀도는 0
+            cluster_densities.append(0.0)
+            continue
+        
+        # 클러스터 내 엣지 개수 가져오기
+        cluster_edges = cluster_edge_dict.get(label, 0)
+        
+        # 밀도 계산: (클러스터 내 엣지 개수) / (클러스터 내 노드 개수)
+        density = cluster_edges / cluster_size
+        cluster_densities.append(density)
+    
+    # 모든 클러스터의 평균 밀도 반환
+    return np.mean(cluster_densities) if cluster_densities else 0.0
+
 def spatial_silhouette(coordinates, labels, metric='euclidean', sample_size=5000):
     """
     좌표 정보를 사용하여 실루엣 스코어를 계산합니다.

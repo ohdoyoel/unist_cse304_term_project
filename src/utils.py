@@ -7,7 +7,7 @@ from collections import defaultdict, Counter
 import os
 import pandas as pd
 
-from src.metrics import avg_clustering_coefficient, conductance, intra_cluster_avg_distance, modularity, normalized_cut, sn_modularity, spatial_silhouette
+from src.metrics import avg_clustering_coefficient, conductance, density_score, intra_cluster_avg_distance, inter_cluster_avg_distance, modularity, normalized_cut, sn_modularity, spatial_silhouette
 
 def _to_numpy(x):
     """Convert torch tensor to numpy array if needed."""
@@ -498,7 +498,7 @@ def get_memory_usage():
 def mean_std(arr):
     return np.mean(arr), np.std(arr)
 
-def evaluate_and_save_results(data, pred, result_filename, method_name, times, iter_info=[], result_dir='result'):
+def evaluate_and_save_results(data, pred, result_filename, method_name, times, iters, iter_info=[], result_dir='result'):
     """
     여러 번의 실험 결과(pred)를 받아 각 지표의 평균과 표준편차를 출력 및 파일에 저장
     """
@@ -507,12 +507,19 @@ def evaluate_and_save_results(data, pred, result_filename, method_name, times, i
 
     time_mean, time_std = mean_std(times)
     print(f"Elapsed Time: {time_mean:.5f} ± {time_std:.5f} seconds")
+
+    iter_mean, iter_std = mean_std(iters)
+    print(f"Iterations: {iter_mean:.5f} ± {iter_std:.5f}")
     
     # 지표별 결과 저장용 리스트
     sn_modularity_scores = []
-    modularity_scores = []
-    conductance_scores = []
-    intra_cluster_distances = []
+    # modularity_scores = []
+    # conductance_scores = []
+    # intra_cluster_distances = []
+
+    cluster_sizes = []
+    inter_cluster_distances = []
+    density = []
 
     num_labels_list = [len(np.unique(pred_labels)) for pred_labels in pred]
     nlabel_mean, nlabel_std = mean_std(num_labels_list)
@@ -528,52 +535,109 @@ def evaluate_and_save_results(data, pred, result_filename, method_name, times, i
         sn_modularity_scores.append(sn_modularity_score)
     sn_mod_mean, sn_mod_std = mean_std(sn_modularity_scores)
     print(f"SN Modularity: {sn_mod_mean:.5f} ± {sn_mod_std:.5f} (sigma={sigma})")
-    
-    for pred_labels in pred:
-        try:
-            modularity_score = modularity(data.edge_index, pred_labels)
-        except Exception as e:
-            print(f"Error calculating Modularity: {str(e)}")
-            modularity_score = -9
-        modularity_scores.append(modularity_score)
-    mod_mean, mod_std = mean_std(modularity_scores)
-    print(f"Modularity: {mod_mean:.5f} ± {mod_std:.5f}")
 
     for pred_labels in pred:
-        try:
-            conductance_score = conductance(data.edge_index, pred_labels)
-        except Exception as e:
-            print(f"Error calculating Conductance: {str(e)}")
-            conductance_score = -9
-        conductance_scores.append(conductance_score)
-    cond_mean, cond_std = mean_std(conductance_scores)
-    print(f"Conductance: {cond_mean:.5f} ± {cond_std:.5f}")
-
-    for pred_labels in pred:
-        try:
-            intra_cluster_distance = intra_cluster_avg_distance(data, pred_labels)
-        except Exception as e:
-            print(f"Error calculating Intra-cluster Distance: {str(e)}")
-            intra_cluster_distance = -9
-        intra_cluster_distances.append(intra_cluster_distance)
-    intra_mean, intra_std = mean_std(intra_cluster_distances)
-    print(f"Intra-cluster Distance: {intra_mean:.5f} ± {intra_std:.5f}")
+        # 각 클러스터별 노드 개수를 계산
+        unique_labels, counts = np.unique(pred_labels, return_counts=True)
+        cluster_sizes.extend(counts)
+    cluster_sizes_mean, cluster_sizes_std = mean_std(cluster_sizes)
+    print(f"Cluster Sizes: {cluster_sizes_mean:.5f} ± {cluster_sizes_std:.5f}")
     
+    for pred_labels in pred:
+        inter_cluster_distances.append(inter_cluster_avg_distance(data, pred_labels))
+    inter_cluster_distances_mean, inter_cluster_distances_std = mean_std(inter_cluster_distances)
+    print(f"Inter-cluster Distances: {inter_cluster_distances_mean:.5f} ± {inter_cluster_distances_std:.5f}")
+    
+    for pred_labels in pred:
+        density.append(density_score(data, pred_labels))
+    density_mean, density_std = mean_std(density)
+    print(f"Density: {density_mean:.5f} ± {density_std:.5f}")
+
+    # for pred_labels in pred:
+    #     try:
+    #         modularity_score = modularity(data.edge_index, pred_labels)
+    #     except Exception as e:
+    #         print(f"Error calculating Modularity: {str(e)}")
+    #         modularity_score = -9
+    #     modularity_scores.append(modularity_score)
+    # mod_mean, mod_std = mean_std(modularity_scores)
+    # print(f"Modularity: {mod_mean:.5f} ± {mod_std:.5f}")
+
+    # for pred_labels in pred:
+    #     try:
+    #         conductance_score = conductance(data.edge_index, pred_labels)
+    #     except Exception as e:
+    #         print(f"Error calculating Conductance: {str(e)}")
+    #         conductance_score = -9
+    #     conductance_scores.append(conductance_score)
+    # cond_mean, cond_std = mean_std(conductance_scores)
+    # print(f"Conductance: {cond_mean:.5f} ± {cond_std:.5f}")
+
+    # for pred_labels in pred:
+    #     try:
+    #         intra_cluster_distance = intra_cluster_avg_distance(data, pred_labels)
+    #     except Exception as e:
+    #         print(f"Error calculating Intra-cluster Distance: {str(e)}")
+    #         intra_cluster_distance = -9
+    #     intra_cluster_distances.append(intra_cluster_distance)
+    # intra_mean, intra_std = mean_std(intra_cluster_distances)
+    # print(f"Intra-cluster Distance: {intra_mean:.5f} ± {intra_std:.5f}")
     
     # 파일에 저장
     with open(os.path.join(result_dir, result_filename), 'a') as f:
         f.write("\n")
         f.write(f"{method_name}\n")
-        for info in iter_info:
-            f.write(f"{info}\n")
-        f.write(f"# of Nodes: {data.num_nodes}\n")
+        # for info in iter_info:
+        #     f.write(f"{info}\n")
+        # f.write(f"# of Nodes: {data.num_nodes}\n")
         f.write(f"# of Experiments: {len(pred)}\n")
         f.write(f"Elapsed Time: {time_mean:.5f} ± {time_std:.5f} seconds\n")
+        f.write(f"Iterations: {iter_mean:.5f} ± {iter_std:.5f}\n")
         f.write(f"# of Labels: {nlabel_mean:.5f} ± {nlabel_std:.5f}\n")
         f.write(f"SN Modularity: {sn_mod_mean:.5f} ± {sn_mod_std:.5f} (sigma={sigma})\n")
-        f.write(f"Modularity: {mod_mean:.5f} ± {mod_std:.5f}\n")
-        f.write(f"Conductance: {cond_mean:.5f} ± {cond_std:.5f}\n")
-        f.write(f"Intra-cluster Distance: {intra_mean:.5f} ± {intra_std:.5f}\n")
+        # f.write(f"Modularity: {mod_mean:.5f} ± {mod_std:.5f}\n")
+        # f.write(f"Conductance: {cond_mean:.5f} ± {cond_std:.5f}\n")
+        # f.write(f"Intra-cluster Distance: {intra_mean:.5f} ± {intra_std:.5f}\n")
+        f.write(f"Cluster Sizes: {cluster_sizes_mean:.5f} ± {cluster_sizes_std:.5f}\n")
+        f.write(f"Inter-cluster Distances: {inter_cluster_distances_mean:.5f} ± {inter_cluster_distances_std:.5f}\n")
+        f.write(f"Density: {density_mean:.5f} ± {density_std:.5f}\n")
+        f.write(f"times: {[float(x) for x in times]}\n")
+        f.write(f"iters: {[int(x) for x in iters]}\n")
+        f.write(f"sn_modularity: {[float(x) for x in sn_modularity_scores]}\n")
+        f.write(f"cluster_sizes: {[int(x) for x in cluster_sizes]}\n")
+        f.write(f"inter_cluster_distances: {[float(x) for x in inter_cluster_distances]}\n")
+        f.write(f"density: {[float(x) for x in density]}\n")
+
+def get_long_lat(data, num_nodes):
+    longitude = (
+        data.longitude.cpu().numpy() if hasattr(data, 'longitude') and hasattr(data.longitude, 'cpu')
+        else data.longitude if hasattr(data, 'longitude')
+        else np.full(num_nodes, np.nan)
+    )
+    latitude = (
+        data.latitude.cpu().numpy() if hasattr(data, 'latitude') and hasattr(data.latitude, 'cpu')
+        else data.latitude if hasattr(data, 'latitude')
+        else np.full(num_nodes, np.nan)
+    )
+    return longitude, latitude
+
+def save_result(data, pred_lp, path, file):
+    num_nodes = data.num_nodes
+    longitude, latitude = get_long_lat(data, num_nodes)
+    # pred_lp가 tuple이면 첫 번째 값만 사용
+    if isinstance(pred_lp, tuple):
+        pred_lp = pred_lp[0]
+    nodes_df = pd.DataFrame({
+        'node_id': np.arange(num_nodes),
+        'cluster_label': pred_lp.cpu().numpy(),
+        'longitude': longitude,
+        'latitude': latitude
+    })
+    edge_array = data.edge_index.cpu().numpy() if hasattr(data.edge_index, 'cpu') else data.edge_index
+    edges = set(zip(edge_array[0], edge_array[1]))
+    edges_df = pd.DataFrame(list(edges), columns=['source', 'target']).drop_duplicates()
+    save_graph_result(nodes_df, edges_df, file, result_dir=path)
+
 
 def scipy_sparse_to_torch_sparse(sparse_mtx):
     """
